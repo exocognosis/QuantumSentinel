@@ -1799,6 +1799,94 @@ function Exposure({ data }) {
   );
 }
 
+const MIGRATION_PHASES = [
+  ["Establish scope and cryptographic inventory", "Confirm in-scope systems, data flows, certificates, keys, libraries, protocols, vendors, and owners.", "Approved scope, accountable owners, and a current cryptographic inventory."],
+  ["Prioritize exposure and data lifetime", "Classify business criticality, confidentiality lifetime, HNDL and TNFL relevance, algorithm exposure, and external dependencies.", "Risk-ranked migration backlog with documented rationale and deadlines."],
+  ["Define the target cryptographic architecture", "Select approved post-quantum or hybrid profiles, trust-chain changes, key-management requirements, rollback paths, and interoperability constraints.", "Architecture decision record and system-specific target state."],
+  ["Pilot and validate", "Test performance, compatibility, certificate and key lifecycles, failure behavior, monitoring, recovery, and vendor integration in a controlled environment.", "Pilot evidence showing acceptance criteria, defects, and remediation decisions."],
+  ["Roll out and cut over", "Sequence production deployment by urgency, coordinate owners and change windows, retire vulnerable configurations, and track exceptions.", "Completed production changes with approved exceptions and rollback evidence."],
+  ["Prove readiness and operate", "Rescan the environment, verify crypto posture, preserve CBOM and change evidence, monitor for regression, and schedule periodic reassessment.", "Evidence package supporting closure and continuous crypto-agility."],
+];
+
+async function downloadMigrationPlan(action) {
+  const { jsPDF } = await import("jspdf");
+  const clean = value => String(value || "").replace(/[–—‑]/g, "-");
+  const pdf = new jsPDF({ unit: "pt", format: "letter" });
+  const margin = 54;
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const usableWidth = pageWidth - margin * 2;
+  let y = 56;
+  const ensureSpace = height => { if (y + height <= pageHeight - 58) return; pdf.addPage(); y = 56; };
+  const writeWrapped = (text, size = 10, color = [54, 72, 103], indent = 0, gap = 5) => {
+    pdf.setFontSize(size);
+    pdf.setTextColor(...color);
+    const lines = pdf.splitTextToSize(clean(text), usableWidth - indent);
+    pdf.text(lines, margin + indent, y);
+    y += lines.length * (size + 3) + gap;
+  };
+  pdf.setFillColor(7, 94, 232);
+  pdf.rect(0, 0, pageWidth, 12, "F");
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(11);
+  pdf.setTextColor(7, 94, 232);
+  pdf.text("QUANTUMSENTINEL", margin, y);
+  y += 27;
+  pdf.setFont("helvetica", "bold");
+  writeWrapped(`${action.title} - Quantum Migration Plan`, 24, [14, 35, 70], 0, 12);
+  pdf.setFont("helvetica", "normal");
+  writeWrapped("A generalized, evidence-oriented plan for moving priority cryptography toward a post-quantum-ready target state.", 11, [90, 109, 143], 0, 18);
+  pdf.setDrawColor(218, 226, 238);
+  pdf.line(margin, y, pageWidth - margin, y);
+  y += 22;
+  [["Scope", action.asset], ["Owner", action.owner], ["Status", action.status], ["Target date", new Date(`${action.due}T00:00:00`).toLocaleDateString()], ["Urgency", `${action.urgency}/100`], ["Target state", action.target]].forEach(([label, value]) => {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    pdf.setTextColor(90, 109, 143);
+    pdf.text(label.toUpperCase(), margin, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(14, 35, 70);
+    const lines = pdf.splitTextToSize(clean(value), usableWidth - 120);
+    pdf.text(lines, margin + 120, y);
+    y += Math.max(20, lines.length * 12);
+  });
+  y += 10;
+  pdf.setFont("helvetica", "bold");
+  writeWrapped("Implementation roadmap", 16, [14, 35, 70], 0, 12);
+  MIGRATION_PHASES.forEach(([title, work, evidence], index) => {
+    ensureSpace(112);
+    pdf.setFillColor(237, 244, 255);
+    pdf.roundedRect(margin, y - 14, 30, 30, 6, 6, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(12);
+    pdf.setTextColor(7, 94, 232);
+    pdf.text(String(index + 1), margin + 11, y + 6);
+    pdf.setTextColor(14, 35, 70);
+    pdf.text(clean(title), margin + 44, y + 3);
+    y += 25;
+    pdf.setFont("helvetica", "normal");
+    writeWrapped(work, 10, [54, 72, 103], 44, 4);
+    pdf.setFont("helvetica", "bold");
+    writeWrapped(`Evidence required: ${evidence}`, 9, [26, 139, 103], 44, 15);
+  });
+  ensureSpace(145);
+  pdf.setFont("helvetica", "bold");
+  writeWrapped("Governance and completion criteria", 16, [14, 35, 70], 0, 10);
+  pdf.setFont("helvetica", "normal");
+  ["Every action has an accountable owner, deadline, dependency record, and rollback path.", "Exceptions are time-bounded, approved, and linked to compensating controls.", "Completion requires implementation evidence, validation results, an updated inventory, and a rescan.", "Unknown or unobserved cryptography is tracked as an evidence gap, not treated as safe."].forEach((item, index) => writeWrapped(`${index + 1}. ${item}`, 10, [54, 72, 103], 0, 5));
+  const pages = pdf.getNumberOfPages();
+  for (let page = 1; page <= pages; page += 1) {
+    pdf.setPage(page);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(125, 140, 163);
+    pdf.text(`Generated ${new Date().toLocaleString()} | Generalized planning guidance - validate against organizational requirements`, margin, pageHeight - 28);
+    pdf.text(`${page} / ${pages}`, pageWidth - margin, pageHeight - 28, { align: "right" });
+  }
+  const filename = clean(action.title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  pdf.save(`quantumsentinel-${filename}-plan.pdf`);
+}
+
 function Remediation() {
   const seedActions = [
     { id: "rsa-gateway", title: "Replace RSA key exchange", asset: "api-gateway-prod-01", owner: "Alex R.", due: "2026-08-12", status: "In progress", urgency: 100, target: "Hybrid TLS with ML-KEM" },
@@ -1844,6 +1932,7 @@ function Remediation() {
     setActions(current => [newAction, ...current]);
     setPlanOpen(false);
     setSelectedAction(newAction);
+    downloadMigrationPlan(newAction);
   };
   const openCount = actions.filter(action => action.status !== "Completed").length;
   const progressCount = actions.filter(action => action.status === "In progress").length;
@@ -1896,7 +1985,7 @@ function Remediation() {
         </article>
       </section>
       {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New remediation plan</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={() => setPlanOpen(false)} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input value={planOwner} onChange={event => setPlanOwner(event.target.value)} placeholder="Name or team" /></label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={() => setPlanOpen(false)}>Cancel</button><button type="submit" className="primary"><Check />Add to migration queue</button></div></form></div>}
-      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Remediation action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close remediation details">×</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div></dl><p><b>Planning boundary:</b> This is an accountable migration action. Completion should only be recorded when supporting implementation and validation evidence exists.</p></aside>}
+      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Remediation action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close remediation details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download migration plan PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div></dl><p><b>Planning boundary:</b> This is an accountable migration action. Completion should only be recorded when supporting implementation and validation evidence exists.</p></aside>}
     </>
   );
 }

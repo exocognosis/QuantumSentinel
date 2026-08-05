@@ -1067,6 +1067,7 @@ class JsonBackend {
 
 function normalizeAsset(assetLike, existing = {}) {
   const source = assetLike.result ?? assetLike;
+  const probeObservation = assetLike.result != null;
   const target = assetLike.target ?? {};
   const certificate = source.certificate ?? {};
   const protocol = source.protocol ?? {};
@@ -1082,9 +1083,9 @@ function normalizeAsset(assetLike, existing = {}) {
     algo: assetLike.algo ?? certificate.algorithm ?? existing.algo ?? "Unknown",
     proto: assetLike.proto ?? protocol.name ?? existing.proto ?? "Unknown",
     cls: assetLike.cls ?? classification.label ?? existing.cls ?? "UNKNOWN",
-    hndl: assetLike.hndl ?? existing.hndl ?? 0,
-    tnfl: assetLike.tnfl ?? existing.tnfl ?? 0,
-    risk: assetLike.risk ?? existing.risk ?? 0,
+    hndl: assetLike.hndl ?? existing.hndl ?? (probeObservation ? null : 0),
+    tnfl: assetLike.tnfl ?? existing.tnfl ?? (probeObservation ? null : 0),
+    risk: assetLike.risk ?? existing.risk ?? (probeObservation ? null : 0),
     prio: assetLike.prio ?? classification.priority ?? existing.prio ?? "MONITOR",
     segment: assetLike.segment ?? existing.segment ?? "Unknown",
     pfs: assetLike.pfs ?? protocol.perfectForwardSecrecy ?? existing.pfs ?? false,

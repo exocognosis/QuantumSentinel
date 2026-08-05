@@ -528,11 +528,19 @@ export async function persistProbeResult(datastore, job) {
 
   if (job.status === "completed") {
     let assetForAnalysis = job;
+    let assetId = job.target?.assetId ?? null;
 
-    if (job.target?.assetId != null) {
+    if (assetId == null && job.mode === "tls" && job.target?.host) {
+      const assets = await datastore.listAssets();
+      const existing = assets.find((asset) => asset.hostname === job.target.host);
+      assetId = existing?.id ?? Math.max(0, ...assets.map((asset) => Number(asset.id) || 0)) + 1;
+    }
+
+    if (assetId != null) {
       assetForAnalysis = await datastore.upsertAssetFromProbe({
         ...job,
-        id: job.target.assetId,
+        id: assetId,
+        target: { ...job.target, assetId },
       }, {
         reason: probePersistenceReason(job),
       });
@@ -549,15 +557,28 @@ export async function persistProbeResult(datastore, job) {
       });
     }
 
-    for (const finding of directProbeFindings(job, job.target?.assetId ?? null, evidenceEvent)) {
+    for (const finding of directProbeFindings(job, assetId, evidenceEvent)) {
       const { saved } = await upsertFindingObservation(datastore, finding, job, { direct: true });
       persistence.findingIds.push(saved.id);
       persistence.directFindingIds.push(saved.id);
     }
 
     const analysis = analyzeAsset(assetForAnalysis);
+    if (assetId != null) {
+      assetForAnalysis = await datastore.upsertAsset({
+        ...assetForAnalysis,
+        hndl: analysis.scores.hndl,
+        tnfl: analysis.scores.tnfl,
+        risk: analysis.scores.risk,
+        prio: analysis.priority,
+        migration: analysis.remediation?.target ?? assetForAnalysis.migration,
+      }, {
+        source: "risk-engine",
+        reason: "probe-risk-analysis",
+        observedAt: job.result?.observedAt ?? job.completedAt,
+      });
+    }
     for (const finding of findingsFromAnalysis(assetForAnalysis, analysis)) {
-      const assetId = job.target?.assetId ?? null;
       const observedAt = job.result?.observedAt ?? job.completedAt;
       const { saved } = await upsertFindingObservation(datastore, {
         evidence: {
@@ -567,7 +588,7 @@ export async function persistProbeResult(datastore, job) {
             { kind: "probe-job", id: job.id, label: `${job.target?.host ?? "Probe"} risk analysis source` },
           ],
         },
-        assetId: job.target?.assetId ?? null,
+        assetId,
         ...finding,
         source: "risk-engine",
         observedAt,

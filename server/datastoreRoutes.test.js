@@ -108,9 +108,10 @@ test("persists TLS probe certificate posture into asset history and findings", a
     assert.equal(asset.cert_exp, "Jun 08 12:00:00 2027 GMT");
 
     const history = await datastore.listAssetHistory(1);
-    assert.equal(history.at(-1).source, "probe");
-    assert.equal(history.at(-1).reason, "tls-observation");
-    assert.equal(history.at(-1).asset.algo, "RSA-2048");
+    const probeHistory = history.find((entry) => entry.source === "probe");
+    assert.equal(probeHistory.reason, "tls-observation");
+    assert.equal(probeHistory.asset.algo, "RSA-2048");
+    assert.equal(history.at(-1).source, "risk-engine");
 
     const findings = await datastore.listFindings({ assetId: 1, source: "tls-probe" });
     assert.equal(findings.length, 1);
@@ -600,13 +601,45 @@ test("persists completed probe observations into asset history and findings", as
     assert.equal(probe.data.status, "completed");
 
     const history = await getJson(api.baseUrl, "/api/assets/1/history");
-    assert.equal(history.body.count, 2);
+    assert.equal(history.body.count, 3);
     assert.equal(history.body.data[1].source, "probe");
+    assert.equal(history.body.data[2].source, "risk-engine");
 
     const findings = await getJson(api.baseUrl, "/api/findings?assetId=1");
     assert.equal(findings.body.count, 2);
     assert.equal(findings.body.data[0].source, "risk-engine");
   } finally {
     await api.close();
+  }
+});
+
+test("a direct TLS scan creates an inventory asset when the datastore starts empty", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-direct-tls-"));
+  const datastore = await createDatastore({ filePath: join(dir, "evidence.db"), seedAssets: [] });
+  try {
+    const job = {
+      id: "probe-public-endpoint",
+      mode: "tls",
+      status: "completed",
+      createdAt: "2026-08-05T12:00:00.000Z",
+      completedAt: "2026-08-05T12:00:01.000Z",
+      target: { host: "www.dytallix.com", port: 443 },
+      result: {
+        observedAt: "2026-08-05T12:00:01.000Z",
+        protocol: { name: "TLSv1.3", perfectForwardSecrecy: true },
+        certificate: { algorithm: "RSA-2048", fingerprint256: "DD:YY:TT" },
+        classification: { label: "SHOR-CRITICAL", priority: "HIGH", quantumVulnerable: true },
+        findings: ["Quantum-vulnerable certificate observed"],
+      },
+    };
+
+    await persistProbeResult(datastore, job);
+    const assets = await datastore.listAssets();
+    assert.equal(assets.length, 1);
+    assert.equal(assets[0].hostname, "www.dytallix.com");
+    assert.equal((await datastore.listFindings({ assetId: assets[0].id })).length > 0, true);
+  } finally {
+    await datastore.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });

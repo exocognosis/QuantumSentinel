@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -680,7 +680,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
   );
 }
 
-function Scan({ scans, setScans, setActive }) {
+function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
   const [mode, setMode] = useState("public");
   const [target, setTarget] = useState("");
   const [running, setRunning] = useState(false);
@@ -706,7 +706,19 @@ function Scan({ scans, setScans, setActive }) {
     );
     return () => clearInterval(timer);
   }, [running]);
-  async function startScan() {
+  async function startScan(requestOverride = null) {
+    const scanMode = requestOverride?.mode === "device"
+      ? "device"
+      : requestOverride?.mode === "discovery"
+        ? "network"
+        : mode;
+    const scanTarget = requestOverride?.host
+      ?? requestOverride?.hosts?.join(", ")
+      ?? target;
+    if (requestOverride) {
+      setMode(scanMode);
+      setTarget(scanMode === "device" ? "Local machine" : scanTarget);
+    }
     setError("");
     setResultNote("");
     setCompleted(false);
@@ -719,16 +731,17 @@ function Scan({ scans, setScans, setActive }) {
       const boundedPort = Math.max(1, Math.min(65535, Number(port) || 443));
       const boundedTimeout = Math.max(
         250,
-        Math.min(mode === "public" ? 10000 : 5000, Number(timeoutMs) || 2500),
+        Math.min(scanMode === "public" ? 10000 : 5000, Number(timeoutMs) || 2500),
       );
-      if (mode === "public")
+      if (requestOverride) request = { ...requestOverride };
+      else if (scanMode === "public")
         request = {
           mode: "tls",
           host: target.replace(/^https?:\/\//, "").split("/")[0],
           port: boundedPort,
           timeoutMs: boundedTimeout,
         };
-      else if (mode === "device")
+      else if (scanMode === "device")
         request = {
           mode: "device",
           scope: deviceScope,
@@ -786,18 +799,19 @@ function Scan({ scans, setScans, setActive }) {
       setLastResult({
         ...job.result,
         _riskScore: observedScore,
-        _targetLabel: job.targetLabel || target,
+          _targetLabel: job.targetLabel || scanTarget,
       });
       setScans((prev) => [
         {
           ...job,
-          targetLabel: job.targetLabel || target,
+          targetLabel: job.targetLabel || scanTarget,
           riskScore: observedScore,
           completedAt: job.completedAt || new Date().toISOString(),
           status: job.status === "QUEUED" ? "RUNNING" : job.status,
         },
         ...prev.filter((s) => s.id !== job.id),
       ]);
+      await onEvidenceSaved?.();
       setTimeout(() => {
         setProgress(100);
         setCompleted(true);
@@ -1049,7 +1063,7 @@ function Scan({ scans, setScans, setActive }) {
             <button
               className="primary"
               disabled={running || !target.trim()}
-              onClick={startScan}
+              onClick={() => startScan()}
             >
               <Play />
               {running ? "Scanning…" : "Start scan"}
@@ -1365,8 +1379,7 @@ function Scan({ scans, setScans, setActive }) {
         <RecentScans
           scans={scans}
           onRescan={(scan) => {
-            setTarget(scan.targetLabel);
-            setMode(scan.type === "local" ? "device" : "public");
+            startScan(scan.request);
           }}
         />
         <article className="card check-card">
@@ -1994,20 +2007,28 @@ async function downloadMigrationPlan(action) {
   pdf.save(`quantumsentinel-${filename}-plan.pdf`);
 }
 
-function Remediation() {
-  const seedActions = [
-    { id: "rsa-gateway", title: "Replace RSA key exchange", asset: "api-gateway-prod-01", owner: "Alex R.", due: "2026-08-12", status: "In progress", urgency: 100, target: "Hybrid TLS with ML-KEM" },
-    { id: "hybrid-vpn", title: "Pilot hybrid TLS", asset: "vpn-concentrator-01", owner: "Maya K.", due: "2026-08-18", status: "Planned", urgency: 82, target: "ML-KEM hybrid key exchange" },
-    { id: "root-hierarchy", title: "Rotate root hierarchy", asset: "ca-root-internal", owner: "Chris D.", due: "2026-08-09", status: "Blocked", urgency: 94, target: "PQC-ready certificate hierarchy" },
-  ];
+function Remediation({ data }) {
+  const legacySeedIds = new Set(["rsa-gateway", "hybrid-vpn", "root-hierarchy"]);
   const [actions, setActions] = useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("quantumsentinel-remediation-actions") || "null");
-      return Array.isArray(stored) && stored.length ? stored : seedActions;
+      return Array.isArray(stored) ? stored.filter((action) => !legacySeedIds.has(action.id)) : [];
     } catch {
-      return seedActions;
+      return [];
     }
   });
+  const evidenceActions = useMemo(() => (data?.assets || [])
+    .filter((asset) => !["HYBRID", "QUANTUM-SAFE"].includes(asset.cls))
+    .map((asset) => ({
+      id: `evidence-${asset.id}`,
+      title: `Modernize ${asset.hostname || asset.name || `asset ${asset.id}`}`,
+      asset: asset.hostname || asset.name || String(asset.id),
+      owner: "Unassigned",
+      due: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
+      status: "Planned",
+      urgency: Number(asset.risk) || 50,
+      target: asset.migration || "Define a hybrid or post-quantum target state",
+    })), [data]);
   const [sortBy, setSortBy] = useState("urgency");
   const [planOpen, setPlanOpen] = useState(false);
   const [selectedAction, setSelectedAction] = useState(null);
@@ -2018,7 +2039,8 @@ function Remediation() {
     localStorage.setItem("quantumsentinel-remediation-actions", JSON.stringify(actions));
   }, [actions]);
   const statusOrder = { Blocked: 0, "In progress": 1, Planned: 2, Completed: 3 };
-  const sortedActions = [...actions].sort((a, b) => {
+  const allActions = [...actions, ...evidenceActions.filter((item) => !actions.some((action) => action.asset === item.asset))];
+  const sortedActions = [...allActions].sort((a, b) => {
     if (sortBy === "due") return a.due.localeCompare(b.due);
     if (sortBy === "status") return statusOrder[a.status] - statusOrder[b.status];
     if (sortBy === "owner") return a.owner.localeCompare(b.owner);
@@ -2041,9 +2063,9 @@ function Remediation() {
     setSelectedAction(newAction);
     downloadMigrationPlan(newAction);
   };
-  const openCount = actions.filter(action => action.status !== "Completed").length;
-  const progressCount = actions.filter(action => action.status === "In progress").length;
-  const completedCount = actions.filter(action => action.status === "Completed").length;
+  const openCount = allActions.filter(action => action.status !== "Completed").length;
+  const progressCount = allActions.filter(action => action.status === "In progress").length;
+  const completedCount = allActions.filter(action => action.status === "Completed").length;
   return (
     <>
       <PageTitle
@@ -2074,7 +2096,7 @@ function Remediation() {
               </select>
             </label>
           </div>
-          {sortedActions.map((action, i) => (
+          {sortedActions.length ? sortedActions.map((action, i) => (
             <div className="asset-row" key={action.id}>
               <span className={`step-number s${i}`}>{i + 1}</span>
               <div>
@@ -2088,7 +2110,7 @@ function Remediation() {
                 Open <ChevronRight />
               </button>
             </div>
-          ))}
+          )) : <p className="empty-scans">No remediation actions yet. Findings from completed scans will appear here.</p>}
         </article>
       </section>
       {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New remediation plan</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={() => setPlanOpen(false)} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input value={planOwner} onChange={event => setPlanOwner(event.target.value)} placeholder="Name or team" /></label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={() => setPlanOpen(false)}>Cancel</button><button type="submit" className="primary"><Check />Add to migration queue</button></div></form></div>}
@@ -2231,12 +2253,14 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("quantumSentinel.theme", theme);
   }, [theme]);
-  useEffect(() => {
-    Promise.all([loadApplianceData(), loadProbeJobs()]).then(([d, j]) => {
+  const refreshEvidence = useCallback(async () => {
+    const [d, j] = await Promise.all([loadApplianceData(), loadProbeJobs()]);
       setData(d);
-      if (j?.length) setScans(j);
-    });
+      setScans(j || []);
   }, []);
+  useEffect(() => {
+    refreshEvidence();
+  }, [refreshEvidence]);
   const scores = useMemo(() => deriveQuantumScores(data || {}), [data]);
   const page = useMemo(() => {
     if (active === "Overview")
@@ -2252,11 +2276,11 @@ export default function App() {
     if (active === "Quantum Context") return <QuantumContext />;
     if (active === "Q-Day Readiness") return <Readiness scores={scores} />;
     if (active === "Scan")
-      return <Scan scans={scans} setScans={setScans} setActive={setActive} />;
+      return <Scan scans={scans} setScans={setScans} setActive={setActive} onEvidenceSaved={refreshEvidence} />;
     if (active === "Exposure") return <Exposure data={data} scores={scores} />;
-    if (active === "Remediation") return <Remediation />;
+    if (active === "Remediation") return <Remediation data={data} />;
     return <Reports scores={scores} data={data} />;
-  }, [active, data, scores, scans]);
+  }, [active, data, scores, scans, refreshEvidence]);
   const saveProfile = (next) => {
     setProfile(next);
     localStorage.setItem(

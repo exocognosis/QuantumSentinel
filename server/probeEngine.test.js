@@ -5,7 +5,7 @@ import { test } from "node:test";
 
 import { ASSETS } from "../src/mockData.js";
 import { createApiServer } from "./app.js";
-import { createProbeJob, getProbeJob, listProbeJobs, resetProbeJobs } from "./probeEngine.js";
+import { createProbeJob, getProbeJob, listProbeJobs, portsFromListenerOutput, resetProbeJobs } from "./probeEngine.js";
 
 const listen = async () => {
   const server = createApiServer();
@@ -112,7 +112,7 @@ test("rejects invalid direct TLS probe asset and host inputs", async () => {
 test("device probes collect runtime metadata across a bounded loopback port set", async () => {
   resetProbeJobs();
   const port = await unusedLocalPort();
-  const job = await createProbeJob({ mode: "device", scope: "ipv4", ports: [port], timeoutMs: 100 });
+  const job = await createProbeJob({ mode: "device", scope: "ipv4", ports: [port], discoverActivePorts: false, timeoutMs: 100 });
 
   assert.equal(job.status, "completed");
   assert.equal(job.mode, "device");
@@ -121,6 +121,15 @@ test("device probes collect runtime metadata across a bounded loopback port set"
   assert.equal(job.result.source, "device");
   assert.equal(job.result.runtime.openssl, process.versions.openssl);
   assert.equal(job.result.summary.targetsScanned, 1);
+});
+
+test("parses bounded listening ports from macOS, Linux, and Windows command output", () => {
+  const output = [
+    "node 123 user 22u IPv6 0x0 TCP *:5173 (LISTEN)",
+    "LISTEN 0 511 127.0.0.1:8787 0.0.0.0:*",
+    "TCP 127.0.0.1:3000 0.0.0.0:0 LISTENING 456",
+  ].join("\n");
+  assert.deepEqual(portsFromListenerOutput(output), [3000, 5173, 8787]);
 });
 
 test("network discovery probes multiple authorized ports with bounded concurrency", async () => {

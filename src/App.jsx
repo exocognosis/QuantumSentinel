@@ -696,6 +696,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
   const [targetLimit, setTargetLimit] = useState(12);
   const [deviceScope, setDeviceScope] = useState("both");
   const [devicePorts, setDevicePorts] = useState("443, 8443, 3000");
+  const [discoverActivePorts, setDiscoverActivePorts] = useState(true);
   const [networkPorts, setNetworkPorts] = useState("443, 8443");
   const [concurrency, setConcurrency] = useState(4);
   useEffect(() => {
@@ -750,6 +751,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
             .filter(Boolean)
             .map(Number)
             .slice(0, 8),
+          discoverActivePorts,
           timeoutMs: boundedTimeout,
         };
       else
@@ -783,7 +785,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
         job.result?.summary?.completedCount === 0;
       if (noReachableService) {
         setError(
-          `Scan completed, but no TLS service was detected on port ${boundedPort}. No cryptographic evidence was collected.`,
+          scanMode === "device"
+            ? "Scan completed, but no active TCP or TLS services were detected on the selected or discovered loopback ports. No cryptographic evidence was collected."
+            : "Scan completed, but no service evidence was detected on the authorized targets and ports.",
         );
         setResultNote("No cryptographic evidence collected.");
         setProgress(0);
@@ -1123,6 +1127,17 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
                       onChange={(e) => setDevicePorts(e.target.value)}
                     />
                     <small>Comma-separated; maximum 8 ports.</small>
+                  </label>
+                  <label className="option-check">
+                    <input
+                      type="checkbox"
+                      checked={discoverActivePorts}
+                      onChange={(e) => setDiscoverActivePorts(e.target.checked)}
+                    />
+                    <span>
+                      Discover active local ports
+                      <small>Finds up to 32 listening TCP services and tests them only through loopback.</small>
+                    </span>
                   </label>
                   <label>
                     <span>Local connection timeout</span>

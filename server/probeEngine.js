@@ -1,5 +1,6 @@
 import net from "node:net";
 import tls from "node:tls";
+import { execFile } from "node:child_process";
 
 import { ASSETS } from "../src/mockData.js";
 
@@ -10,6 +11,7 @@ const MAX_DISCOVERY_TARGETS = 16;
 const MAX_DISCOVERY_TIMEOUT_MS = 5_000;
 const MAX_DISCOVERY_PORTS = 8;
 const MAX_DISCOVERY_CONCURRENCY = 8;
+const MAX_ACTIVE_LOCAL_PORTS = 32;
 
 const jobs = new Map();
 let nextJobId = 1;
@@ -164,7 +166,7 @@ function validateProbeInput(input) {
 
   if (mode === "device") {
     const scope = input.scope === "localhost" ? ["localhost"] : input.scope === "ipv4" ? ["127.0.0.1"] : ["127.0.0.1", "localhost"];
-    return { mode, hosts: scope, ports: parsePorts(input.ports, input.port), concurrency: 2, timeoutMs: parseDiscoveryTimeoutMs(input.timeoutMs) };
+    return { mode, hosts: scope, ports: parsePorts(input.ports, input.port), discoverActivePorts: input.discoverActivePorts !== false, concurrency: 4, timeoutMs: parseDiscoveryTimeoutMs(input.timeoutMs) };
   }
 
   if (typeof input.host !== "string" || input.host.trim() === "") {
@@ -468,8 +470,46 @@ async function discoveryResult({ hosts, ports, timeoutMs, concurrency = 4 }) {
   };
 }
 
+function runPortCommand(command, args) {
+  return new Promise((resolve) => {
+    execFile(command, args, { timeout: 1500, maxBuffer: 512_000 }, (error, stdout) => {
+      resolve(error ? "" : String(stdout || ""));
+    });
+  });
+}
+
+export function portsFromListenerOutput(output) {
+  const ports = [];
+  for (const line of String(output).split("\n")) {
+    if (!/LISTEN/i.test(line)) continue;
+    const matches = [...line.matchAll(/:(\d{1,5})(?=\s|$|\))/g)];
+    for (const match of matches) {
+      const port = Number(match[1]);
+      if (port >= 1 && port <= 65_535) ports.push(port);
+    }
+  }
+  return Array.from(new Set(ports)).sort((a, b) => a - b).slice(0, MAX_ACTIVE_LOCAL_PORTS);
+}
+
+async function discoverActiveLocalPorts() {
+  const commands = process.platform === "win32"
+    ? [["netstat", ["-ano", "-p", "tcp"]]]
+    : [
+        ["lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]],
+        ["ss", ["-ltnH"]],
+        ["netstat", ["-an", "-p", "tcp"]],
+      ];
+  for (const [command, args] of commands) {
+    const ports = portsFromListenerOutput(await runPortCommand(command, args));
+    if (ports.length) return ports;
+  }
+  return [];
+}
+
 async function deviceResult(request) {
-  const discovery = await discoveryResult(request);
+  const discoveredPorts = request.discoverActivePorts ? await discoverActiveLocalPorts() : [];
+  const ports = Array.from(new Set([...request.ports, ...discoveredPorts])).slice(0, MAX_ACTIVE_LOCAL_PORTS);
+  const discovery = await discoveryResult({ ...request, ports });
   return {
     ...discovery,
     source: "device",
@@ -479,7 +519,7 @@ async function deviceResult(request) {
       node: process.versions.node,
       openssl: process.versions.openssl ?? "unknown",
     },
-    scope: { hosts: request.hosts, ports: request.ports },
+    scope: { hosts: request.hosts, ports, requestedPorts: request.ports, discoveredPorts },
   };
 }
 
@@ -553,6 +593,11 @@ export function getProbeJob(id) {
 export async function createProbeJob(input) {
   const request = validateProbeInput(input);
   const job = makeJob(request);
+  job.request = {
+    ...request,
+    ...(request.asset ? { assetId: request.asset.id } : {}),
+  };
+  delete job.request.asset;
   jobs.set(job.id, job);
 
   try {

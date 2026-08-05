@@ -2,12 +2,40 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  buildRescanRequest,
   createProbeJob,
   getProbeJob,
   loadProbeJobs,
   normalizeProbeJob,
   probeFallbackJobs,
 } from "./probeApi.js";
+
+test("buildRescanRequest reconstructs real TLS and discovery requests from older jobs", () => {
+  assert.deepEqual(buildRescanRequest({
+    type: "tls",
+    target: { host: "ecc256.badssl.com", port: 443 },
+    targetLabel: "ecc256.badssl.com:443",
+    request: {},
+  }), {
+    mode: "tls",
+    host: "ecc256.badssl.com",
+    port: 443,
+    timeoutMs: 2500,
+  });
+
+  assert.deepEqual(buildRescanRequest({
+    type: "discovery",
+    targetLabel: "ecc256.badssl.com",
+    request: {},
+    result: { observations: [{ host: "ecc256.badssl.com", port: 443 }] },
+  }), {
+    mode: "discovery",
+    hosts: ["ecc256.badssl.com"],
+    ports: [443],
+    concurrency: 4,
+    timeoutMs: 2500,
+  });
+});
 
 function jsonResponse(body, options = {}) {
   return {

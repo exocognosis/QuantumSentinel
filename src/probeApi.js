@@ -180,6 +180,52 @@ export function normalizeProbeJob(job, index = 0) {
   };
 }
 
+export function buildRescanRequest(scan) {
+  const saved = scan?.request && typeof scan.request === "object" ? scan.request : {};
+  const target = scan?.target && typeof scan.target === "object" ? scan.target : {};
+  const observations = Array.isArray(scan?.result?.observations) ? scan.result.observations : [];
+  const type = String(scan?.type ?? saved.mode ?? "").toLowerCase();
+
+  if (type === "tls") {
+    const label = String(scan?.targetLabel ?? "");
+    const labelMatch = label.match(/^(.*?)(?::(\d+))?$/);
+    const host = saved.host ?? target.host ?? target.hostname ?? labelMatch?.[1];
+    if (!host) return null;
+    return {
+      mode: "tls",
+      host,
+      port: Number(saved.port ?? target.port ?? labelMatch?.[2] ?? 443),
+      timeoutMs: Number(saved.timeoutMs ?? 2500),
+    };
+  }
+
+  if (type === "discovery") {
+    const hosts = saved.hosts ?? target.hosts ?? [...new Set(observations.map((item) => item.host).filter(Boolean))];
+    const ports = saved.ports ?? target.ports ?? [...new Set(observations.map((item) => item.port).filter(Boolean))];
+    if (!hosts.length) return null;
+    return {
+      mode: "discovery",
+      hosts,
+      ports: ports.length ? ports : [443],
+      concurrency: Number(saved.concurrency ?? 4),
+      timeoutMs: Number(saved.timeoutMs ?? 2500),
+    };
+  }
+
+  if (type === "device") {
+    const ports = saved.ports ?? target.ports ?? [...new Set(observations.map((item) => item.port).filter(Boolean))];
+    return {
+      mode: "device",
+      scope: saved.scope ?? target.scope ?? "both",
+      ports: ports.length ? ports : [443, 8443, 3000],
+      discoverActivePorts: saved.discoverActivePorts ?? true,
+      timeoutMs: Number(saved.timeoutMs ?? 2500),
+    };
+  }
+
+  return null;
+}
+
 export async function loadProbeJobs(options = {}) {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "";
@@ -245,5 +291,6 @@ export default {
   loadProbeJobs,
   createProbeJob,
   getProbeJob,
+  buildRescanRequest,
   probeFallbackJobs,
 };

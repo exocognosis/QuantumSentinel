@@ -29,7 +29,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { loadApplianceData } from "./api.js";
-import { createProbeJob, loadProbeJobs } from "./probeApi.js";
+import { buildRescanRequest, createProbeJob, loadProbeJobs } from "./probeApi.js";
 import { deriveQuantumScores } from "./quantumScores.js";
 import "./dashboard.css";
 import "./scan-options.css";
@@ -1394,7 +1394,12 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
         <RecentScans
           scans={scans}
           onRescan={(scan) => {
-            startScan(scan.request);
+            const request = buildRescanRequest(scan);
+            if (request) startScan(request);
+            else {
+              setError("This legacy scan does not contain enough target information to run again. Start a new scan instead.");
+              setFailed(true);
+            }
           }}
         />
         <article className="card check-card">

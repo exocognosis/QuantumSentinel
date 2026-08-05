@@ -50,6 +50,16 @@
 
 final result: passed
 
+## 2026-08-05 — Public scan interpretation pass
+
+- Renamed the public flow to Public TLS posture scan and replaced implied full-chain/readiness stages with the four operations the probe actually performs.
+- Added an explicit scope statement separating endpoint evidence from organization-wide readiness.
+- Replaced the generic bottom banner with a state-aware interpretation card that summarizes observed TLS protocol, certificate algorithm, and forward-secrecy evidence after a successful scan.
+- The interpretation now explains the limitation and routes users to the next authorized internal-evidence step.
+- Updated What we check to What we observe with implementation-faithful descriptions.
+
+final result: passed
+
 ## 2026-08-05 — Probe truth-state pass
 
 - Verified a live scan against `definitely-not-real-quantumsentinel.invalid` returns the backend DNS failure rather than fabricated results.

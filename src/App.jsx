@@ -1990,55 +1990,77 @@ function Remediation() {
   );
 }
 
-function Reports({ scores }) {
-  const cards = [
-    [
-      "Executive posture",
-      `Readiness ${scores.readiness.score}/100 · ${scores.readiness.classification} · ${scores.confidence.level} confidence`,
-    ],
-    [
-      "Q-Day readiness",
-      `${scores.readiness.classification} · methodology, evidence, and timeline`,
-    ],
-    [
-      "Exposure findings",
-      "Critical findings, HNDL candidates, and affected assets",
-    ],
-    [
-      "Migration plan",
-      "Owners, milestones, dependencies, and expected readiness impact",
-    ],
-  ];
-  return (
-    <>
-      <PageTitle
-        title="Reports"
-        subtitle="Clear, evidence-backed outputs centered on one Quantum Readiness Score."
-      >
-        <button className="primary">
-          <FileDown />
-          Generate report
-        </button>
-      </PageTitle>
-      <section className="report-grid">
-        {cards.map(([t, d], i) => (
-          <article className="card report-card" key={t}>
-            <span className={`report-icon r${i}`}>
-              <FileText />
-            </span>
-            <div>
-              <h2>{t}</h2>
-              <p>{d}</p>
-              <small>Updated today · PDF & JSON</small>
-            </div>
-            <button className="secondary">
-              Open <ChevronRight />
-            </button>
-          </article>
-        ))}
-      </section>
-    </>
-  );
+const REPORT_TYPES = [
+  { id: "executive", title: "Executive posture", description: "Headline readiness, confidence, critical exposure, and priority decisions.", sections: ["Readiness summary", "Material exposure", "Leadership decisions", "Evidence limitations"] },
+  { id: "readiness", title: "Q-Day readiness", description: "Score methodology, evidence coverage, readiness drivers, and organizational timeline.", sections: ["Quantum Readiness Score", "Weighted score components", "Evidence confidence", "Readiness timeline"] },
+  { id: "exposure", title: "Exposure findings", description: "Critical findings, HNDL candidates, affected assets, and observed cryptography.", sections: ["Exposure summary", "Critical assets", "HNDL and TNFL signals", "Observed evidence boundary"] },
+  { id: "migration", title: "Migration plan", description: "Owners, milestones, dependencies, target states, and validation requirements.", sections: ["Prioritized backlog", "Migration phases", "Ownership and deadlines", "Completion evidence"] },
+];
+
+function buildReportRecord(type, scores, data) {
+  const summary = data?.summary || {};
+  return {
+    reportId: `${type.id}-${Date.now()}`,
+    type: type.id,
+    title: type.title,
+    generatedAt: new Date().toISOString(),
+    description: type.description,
+    sections: type.sections,
+    metrics: {
+      readinessScore: scores.readiness.score,
+      readinessClassification: scores.readiness.classification,
+      evidenceConfidence: scores.confidence.level,
+      evidenceCoveragePct: scores.confidence.coverage,
+      observedAssets: summary.totalAssets || data?.assets?.length || 0,
+      criticalExposures: summary.criticalCount || 0,
+      hndlCandidates: summary.shorCount || 0,
+      quantumSafeAssets: summary.safeCount || 0,
+    },
+    evidenceBoundary: "This report reflects available inventory, probe, governance, and migration evidence. Unknown or unobserved fields are not proof of safety.",
+  };
+}
+
+function downloadReportJson(report) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `quantumsentinel-${report.type}-report.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadReportPdf(report) {
+  const { jsPDF } = await import("jspdf");
+  const clean = value => String(value || "").replace(/[–—‑]/g, "-");
+  const pdf = new jsPDF({ unit: "pt", format: "letter" });
+  const width = pdf.internal.pageSize.getWidth();
+  const height = pdf.internal.pageSize.getHeight();
+  const margin = 56;
+  const usable = width - margin * 2;
+  let y = 58;
+  const write = (text, size = 10, color = [54, 72, 103], gap = 7) => { pdf.setFontSize(size); pdf.setTextColor(...color); const lines = pdf.splitTextToSize(clean(text), usable); pdf.text(lines, margin, y); y += lines.length * (size + 3) + gap; };
+  pdf.setFillColor(7, 94, 232); pdf.rect(0, 0, width, 12, "F");
+  pdf.setFont("helvetica", "bold"); write("QUANTUMSENTINEL", 11, [7, 94, 232], 18); write(report.title, 26, [14, 35, 70], 10);
+  pdf.setFont("helvetica", "normal"); write(report.description, 11, [90, 109, 143], 20);
+  pdf.setDrawColor(218, 226, 238); pdf.line(margin, y, width - margin, y); y += 24;
+  pdf.setFont("helvetica", "bold"); write("Current evidence snapshot", 16, [14, 35, 70], 12);
+  Object.entries(report.metrics).forEach(([key, value]) => { const label = key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase()); pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(90, 109, 143); pdf.text(clean(label).toUpperCase(), margin, y); pdf.setFont("helvetica", "normal"); pdf.setFontSize(11); pdf.setTextColor(14, 35, 70); pdf.text(clean(value), margin + 190, y); y += 23; });
+  y += 10; pdf.setFont("helvetica", "bold"); write("Included sections", 16, [14, 35, 70], 10);
+  report.sections.forEach((section, index) => { pdf.setFillColor(237, 244, 255); pdf.roundedRect(margin, y - 13, 28, 28, 6, 6, "F"); pdf.setFont("helvetica", "bold"); pdf.setFontSize(11); pdf.setTextColor(7, 94, 232); pdf.text(String(index + 1), margin + 10, y + 5); pdf.setTextColor(14, 35, 70); pdf.text(clean(section), margin + 42, y + 4); y += 43; });
+  pdf.setFont("helvetica", "bold"); write("Evidence boundary", 16, [14, 35, 70], 8); pdf.setFont("helvetica", "normal"); write(report.evidenceBoundary, 10, [54, 72, 103], 8);
+  pdf.setFontSize(8); pdf.setTextColor(125, 140, 163); pdf.text(`Generated ${new Date(report.generatedAt).toLocaleString()} | Evidence-backed planning output`, margin, height - 28); pdf.text("1 / 1", width - margin, height - 28, { align: "right" });
+  pdf.save(`quantumsentinel-${report.type}-report.pdf`);
+}
+
+function Reports({ scores, data }) {
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [generatorType, setGeneratorType] = useState("executive");
+  const openReport = type => setSelectedReport(buildReportRecord(type, scores, data));
+  const generatedReport = () => buildReportRecord(REPORT_TYPES.find(type => type.id === generatorType), scores, data);
+  return <><PageTitle title="Reports" subtitle="Clear, evidence-backed outputs centered on one Quantum Readiness Score."><button className="primary" onClick={() => setGeneratorOpen(true)}><FileDown />Generate report</button></PageTitle><section className="report-grid">{REPORT_TYPES.map((type, index) => <article className="card report-card" key={type.id}><span className={`report-icon r${index}`}><FileText /></span><div><h2>{type.title}</h2><p>{type.id === "executive" ? `Readiness ${scores.readiness.score}/100 · ${scores.readiness.classification} · ${scores.confidence.level} confidence` : type.description}</p><small>Live evidence · PDF & JSON</small></div><button className="secondary" onClick={() => openReport(type)}>Open <ChevronRight /></button></article>)}</section>{generatorOpen && <div className="plan-backdrop"><div className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Generate evidence report"><div className="plan-dialog-heading"><div><span className="eyebrow">Report generator</span><h2>Choose an evidence package</h2><p>Exports use the current readiness and inventory snapshot.</p></div><button className="icon-button" onClick={() => setGeneratorOpen(false)} aria-label="Close report generator">×</button></div><label>Report type<select value={generatorType} onChange={event => setGeneratorType(event.target.value)}>{REPORT_TYPES.map(type => <option value={type.id} key={type.id}>{type.title}</option>)}</select></label><div className="plan-actions"><button className="secondary" onClick={() => downloadReportJson(generatedReport())}>Download JSON</button><button className="primary" onClick={() => downloadReportPdf(generatedReport())}><FileDown />Generate PDF</button></div></div></div>}{selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Evidence report</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><dl>{Object.entries(selectedReport.metrics).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase())}</dt><dd>{value}</dd></div>)}</dl><h3>Included sections</h3><ol className="report-sections">{selectedReport.sections.map(section => <li key={section}>{section}</li>)}</ol><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}</>;
 }
 
 export default function App() {
@@ -2073,7 +2095,7 @@ export default function App() {
       return <Scan scans={scans} setScans={setScans} setActive={setActive} />;
     if (active === "Exposure") return <Exposure data={data} scores={scores} />;
     if (active === "Remediation") return <Remediation />;
-    return <Reports scores={scores} />;
+    return <Reports scores={scores} data={data} />;
   }, [active, data, scores, scans]);
   const saveProfile = (next) => {
     setProfile(next);

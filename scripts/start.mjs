@@ -18,9 +18,15 @@ const datastorePath = freshDirectory ? join(freshDirectory, "evidence.db") : pro
 
 console.log("Preparing the latest Quantum Sentinel dashboard...");
 if (freshAssessment) console.log("Starting a clean, isolated assessment. Existing evidence will not be changed.");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const build = spawnSync(npmCommand, ["run", "build"], { stdio: "inherit" });
+const npmEntryPoint = process.env.npm_execpath;
+const build = npmEntryPoint
+  ? spawnSync(process.execPath, [npmEntryPoint, "run", "build"], { stdio: "inherit" })
+  : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], {
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
 if (build.error || build.status !== 0) {
+  if (build.error) console.error(`Build process error: ${build.error.message}`);
   console.error("Quantum Sentinel could not build the dashboard.");
   process.exit(build.status || 1);
 }

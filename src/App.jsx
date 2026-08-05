@@ -981,6 +981,35 @@ function Scan({ scans, setScans, setActive }) {
             "This is a bounded host-and-port discovery",
             "It tests only the entered hosts on one port. It does not discover unknown devices, sweep networks, or inspect every service.",
           ];
+  const evidenceCoverage = {
+    public: {
+      label: "Public endpoint",
+      observed:
+        "TLS version, negotiated cipher, certificate key algorithm, issuer, expiry, and forward-secrecy signal for one endpoint.",
+      outside:
+        "Internal PKI, stored data, VPNs, databases, code signing, vendor dependencies, and governance.",
+      contribution:
+        "Adds external endpoint evidence. It cannot independently establish organization-wide readiness.",
+    },
+    device: {
+      label: "Local service",
+      observed:
+        "Reachability and available TLS evidence for the selected loopback service port on this machine.",
+      outside:
+        "Application and package inventory, filesystem cryptography, stored keys and data, and non-loopback services.",
+      contribution:
+        "Adds bounded local-service evidence. Full device readiness still requires dedicated inventory collectors.",
+    },
+    network: {
+      label: "Authorized targets",
+      observed:
+        "TCP reachability and available TLS evidence for the explicitly authorized hosts on the selected port.",
+      outside:
+        "Unknown devices, unlisted ports, opaque appliances, stored data, application cryptography, and governance.",
+      contribution:
+        "Broadens environment evidence within the approved target list; it is not a network-wide attestation.",
+    },
+  }[mode];
   const selectMode = (id) => {
     setMode(id);
     setTarget(
@@ -1385,37 +1414,36 @@ function Scan({ scans, setScans, setActive }) {
             Learn about scoring <ChevronRight />
           </button>
         </article>
-        <article className="card monitor-card">
+        <article className="card evidence-coverage-card">
           <div className="card-heading">
             <span>
-              <Activity />
-              Scheduled monitoring
+              <CircleHelp />
+              Evidence coverage
             </span>
-            <label className="switch">
-              <input type="checkbox" defaultChecked />
-              <i />
-            </label>
+            <small>{evidenceCoverage.label}</small>
           </div>
-          <p>We continuously monitor your approved assets.</p>
-          {["example.com", "api.quantumlink.dev"].map((x) => (
-            <div className="monitor-row" key={x}>
-              <Globe2 />
-              <b>{x}</b>
-              <span>
-                Next run
-                <br />
-                <strong>7:55 AM</strong>
-              </span>
-              <small>
-                <i />
-                Active
-              </small>
+          <p>Use this boundary when interpreting the result and any generated report.</p>
+          <div className="coverage-row observed">
+            <span><Check /></span>
+            <div>
+              <b>Observed by this scan</b>
+              <small>{evidenceCoverage.observed}</small>
             </div>
-          ))}
-          <button className="secondary">
-            <Settings2 />
-            Manage
-          </button>
+          </div>
+          <div className="coverage-row">
+            <span><ShieldAlert /></span>
+            <div>
+              <b>Still outside scope</b>
+              <small>{evidenceCoverage.outside}</small>
+            </div>
+          </div>
+          <div className="coverage-row">
+            <span><Target /></span>
+            <div>
+              <b>Readiness contribution</b>
+              <small>{evidenceCoverage.contribution}</small>
+            </div>
+          </div>
         </article>
         <article className="insight scan-meaning">
           <span

@@ -799,9 +799,16 @@ function Scan({ scans, setScans, setActive }) {
         setRunning(false);
         return;
       }
-      const observedScore = noReachableService ? null : job.riskScore;
+      const observedScore =
+        noReachableService || !Number.isFinite(job.riskScore) || job.riskScore <= 0
+          ? null
+          : job.riskScore;
       setResultNote("Scan completed and evidence saved.");
-      setLastResult(job.result);
+      setLastResult({
+        ...job.result,
+        _riskScore: observedScore,
+        _targetLabel: job.targetLabel || target,
+      });
       setScans((prev) => [
         {
           ...job,
@@ -942,6 +949,8 @@ function Scan({ scans, setScans, setActive }) {
   const ModeIcon =
     mode === "public" ? Globe2 : mode === "device" ? Laptop : Network;
   const discoverySummary = lastResult?.summary;
+  const resultClassification = lastResult?.classification;
+  const resultFindings = lastResult?.findings || [];
   const completedSummary =
     mode === "public"
       ? [
@@ -1277,8 +1286,74 @@ function Scan({ scans, setScans, setActive }) {
                 Cancel scan
               </button>
             )}
+            {completed && lastResult && (
+              <button
+                className="primary"
+                onClick={() =>
+                  document
+                    .getElementById("scan-analysis")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+              >
+                View scan analysis <ChevronRight />
+              </button>
+            )}
           </div>
         </article>
+        {completed && lastResult && (
+          <article className="card scan-analysis" id="scan-analysis">
+            <div className="scan-analysis-heading">
+              <span className="metric-icon blue"><ShieldCheck /></span>
+              <div>
+                <span className="eyebrow">Collected evidence analysis</span>
+                <h2>{lastResult._targetLabel || target}</h2>
+                <p>This analysis describes only the target and services observed in this scan.</p>
+              </div>
+              <span className={`analysis-classification ${resultClassification?.priority === "CRITICAL" ? "critical" : ""}`}>
+                {resultClassification?.label || "OBSERVED"}
+              </span>
+            </div>
+            {mode === "public" ? (
+              <>
+                <div className="analysis-evidence-grid">
+                  <div><small>TLS protocol</small><strong>{observedProtocol || "Not reported"}</strong></div>
+                  <div><small>Certificate key</small><strong>{observedAlgorithm || "Not reported"}</strong></div>
+                  <div><small>Negotiated cipher</small><strong>{lastResult.protocol?.cipher || "Not reported"}</strong></div>
+                  <div><small>Forward secrecy</small><strong>{observedPfs === true ? "Observed" : observedPfs === false ? "Not observed" : "Unknown"}</strong></div>
+                  <div><small>Priority</small><strong>{resultClassification?.priority || "Review"}</strong></div>
+                  <div><small>Endpoint risk</small><strong>{lastResult._riskScore == null ? "Not scored" : `${lastResult._riskScore}/100`}</strong></div>
+                </div>
+                <div className="analysis-certificate">
+                  <h3>Presented certificate</h3>
+                  <dl>
+                    <div><dt>Subject</dt><dd>{lastResult.certificate?.subject || "Not reported"}</dd></div>
+                    <div><dt>Issuer</dt><dd>{lastResult.certificate?.issuer || "Not reported"}</dd></div>
+                    <div><dt>Expires</dt><dd>{lastResult.certificate?.expiresAt || "Not reported"}</dd></div>
+                  </dl>
+                </div>
+              </>
+            ) : (
+              <div className="analysis-evidence-grid">
+                <div><small>Targets tested</small><strong>{discoverySummary?.targetsScanned ?? "Recorded"}</strong></div>
+                <div><small>Services observed</small><strong>{discoverySummary?.completedCount ?? "Recorded"}</strong></div>
+                <div><small>Unreachable</small><strong>{discoverySummary?.failedCount ?? "Recorded"}</strong></div>
+              </div>
+            )}
+            <div className="analysis-findings">
+              <h3>What the evidence means</h3>
+              {resultFindings.length ? (
+                <ul>{resultFindings.map(finding => <li key={finding}>{finding}</li>)}</ul>
+              ) : (
+                <p>No additional cryptographic findings were returned.</p>
+              )}
+              <div className="analysis-actions">
+                <button className="secondary" onClick={() => setActive("Exposure")}>Open Quantum Exposure <ChevronRight /></button>
+                <button className="secondary" onClick={() => setActive("Reports")}>Create evidence report <ChevronRight /></button>
+              </div>
+            </div>
+            <p className="analysis-boundary"><CircleHelp /><span><b>Interpretation boundary:</b> Endpoint evidence can identify exposed cryptography, but it cannot establish organization-wide Quantum Readiness without internal inventory, governance, and migration evidence.</span></p>
+          </article>
+        )}
         <RecentScans
           scans={scans}
           onRescan={(scan) => {

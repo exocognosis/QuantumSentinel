@@ -50,6 +50,14 @@
 
 final result: passed
 
+## 2026-08-05 — Scan target entry pass
+
+- Public target input now starts empty with the gray placeholder `For example www.google.com`.
+- Placeholder disappears on entry, Start scan remains disabled while empty, and enables after typing.
+- Empty scan state now reads `No target selected` rather than implying that example.com was chosen.
+
+final result: passed
+
 ## 2026-08-05 — Public scan interpretation pass
 
 - Renamed the public flow to Public TLS posture scan and replaced implied full-chain/readiness stages with the four operations the probe actually performs.

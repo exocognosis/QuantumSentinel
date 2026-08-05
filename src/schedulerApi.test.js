@@ -130,6 +130,9 @@ test("tickSchedulerNow normalizes status plus returned run records", async () =>
       summary: "",
       observationsCount: 5,
       findingsCount: 1,
+      evidenceCount: 0,
+      evidenceRefs: [],
+      findingIds: [],
     },
   ]);
 });

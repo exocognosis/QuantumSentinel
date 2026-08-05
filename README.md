@@ -2,6 +2,18 @@
 
 Local prototype for a post-quantum cryptography readiness dashboard and assessment appliance.
 
+## Q-Day Repository Scanner
+
+QuantumSentinel includes an evidence-backed static scanner for cryptographic migration discovery. It identifies deprecated cryptography, Shor-vulnerable public-key references, post-quantum algorithms, and quantum-resistant symmetric/hash primitives without collapsing those categories into a single "safe" label.
+
+```sh
+npm run scan -- /path/to/repository
+npm run scan -- /path/to/repository --output quantum-readiness.json
+npm run scan -- /path/to/repository --html quantum-readiness.html
+```
+
+Every observation includes its file, line, evidence confidence, likely usage context, rationale, and migration guidance. The readiness score is transparent and deliberately assigns lower weight to documentation and dependency references. It is a prioritization aid, not a certification or substitute for runtime and architectural review.
+
 ## Product State
 
 QuantumSentinel currently runs as a local React dashboard backed by a Node API and persistent local datastore. It is suitable for MVP demos, local assessment workflows, and API/client development. It is not yet a production appliance.

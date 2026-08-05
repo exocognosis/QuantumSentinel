@@ -50,6 +50,16 @@
 
 final result: passed
 
+## 2026-08-05 — Scan-mode differentiation pass
+
+- Public website, local device, and authorized network now have distinct titles, evidence stages, scope statements, icons, observation lists, and interpretation copy.
+- Local device is accurately framed as a two-address loopback check on one selected port, not a device-wide cryptographic inventory.
+- Authorized network is accurately framed as an explicit host-list and single-port TLS/TCP discovery, not network enumeration or port sweeping.
+- Switching modes clears stale progress, result, failure, and interpretation state.
+- Verified all three rendered modes and their evidence boundaries in the browser.
+
+final result: passed
+
 ## 2026-08-05 — Scan target entry pass
 
 - Public target input now starts empty with the gray placeholder `For example www.google.com`.

@@ -1,11 +1,3 @@
-import {
-  ALGO_DIST as FALLBACK_ALGORITHMS,
-  ALERTS as FALLBACK_ALERTS,
-  ASSETS as FALLBACK_ASSETS,
-  COMPLIANCE as FALLBACK_COMPLIANCE,
-  TREND_DATA as FALLBACK_TRENDS,
-} from "./mockData.js";
-
 const ENDPOINTS = {
   assets: "/api/assets",
   alerts: "/api/alerts",
@@ -16,10 +8,6 @@ const ENDPOINTS = {
 };
 
 const CBOM_ENDPOINT = "/api/cbom";
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
 
 function average(items, field) {
   if (!items.length) return 0;
@@ -113,11 +101,11 @@ function normalizeData(payloads, source) {
 function fallbackData() {
   return normalizeData(
     {
-      assets: clone(FALLBACK_ASSETS),
-      alerts: clone(FALLBACK_ALERTS),
-      compliance: clone(FALLBACK_COMPLIANCE),
-      trends: clone(FALLBACK_TRENDS),
-      algorithms: clone(FALLBACK_ALGORITHMS),
+      assets: [],
+      alerts: [],
+      compliance: [],
+      trends: [],
+      algorithms: [],
       summary: {},
     },
     "fallback",

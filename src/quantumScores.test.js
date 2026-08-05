@@ -22,3 +22,10 @@ test("incomplete or fallback evidence lowers confidence", () => {
   assert.equal(scores.confidence.level, "Low");
   assert.ok(scores.confidence.coverage < 50);
 });
+
+test("an empty evidence set is unassessed rather than a zero readiness score", () => {
+  const scores = deriveQuantumScores({ assets: [], compliance: [] });
+  assert.equal(scores.readiness.assessed, false);
+  assert.equal(scores.readiness.classification, "Not yet assessed");
+  assert.equal(scores.confidence.level, "Low");
+});

@@ -1,10 +1,12 @@
 import { createApiServer } from "./app.js";
 import { createDatastore } from "./datastore.js";
+import { ASSETS } from "../src/mockData.js";
 
 const DEFAULT_PORT = 8787;
 const port = Number.parseInt(process.env.PORT ?? `${DEFAULT_PORT}`, 10);
 const host = process.env.HOST ?? "127.0.0.1";
-const datastorePath = process.env.QS_DATASTORE_PATH ?? "./.quantumsentinel/datastore.db";
+const demoMode = envFlag("QS_DEMO_MODE");
+const datastorePath = process.env.QS_DATASTORE_PATH ?? "./.quantumsentinel/evidence.db";
 const datastoreBackend = process.env.QS_DATASTORE_BACKEND ?? "auto";
 
 function envFlag(name) {
@@ -17,7 +19,11 @@ function envInteger(name) {
   return Number.parseInt(value, 10);
 }
 
-const datastore = await createDatastore({ backend: datastoreBackend, filePath: datastorePath });
+const datastore = await createDatastore({
+  backend: datastoreBackend,
+  filePath: datastorePath,
+  seedAssets: demoMode ? ASSETS : [],
+});
 const server = createApiServer({
   datastore,
   schedulerOptions: {

@@ -44,32 +44,7 @@ const NAV = [
   ["Reports", FileText],
 ];
 
-const FALLBACK_SCANS = [
-  {
-    id: "example",
-    targetLabel: "example.com",
-    type: "tls",
-    status: "COMPLETED",
-    riskScore: 79,
-    completedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
-  },
-  {
-    id: "quantumlink",
-    targetLabel: "api.quantumlink.dev",
-    type: "tls",
-    status: "COMPLETED",
-    riskScore: 61,
-    completedAt: new Date(Date.now() - 86_400_000).toISOString(),
-  },
-  {
-    id: "local",
-    targetLabel: "Local machine",
-    type: "local",
-    status: "COMPLETED",
-    riskScore: 88,
-    completedAt: new Date(Date.now() - 172_800_000).toISOString(),
-  },
-];
+const FALLBACK_SCANS = [];
 
 const QDAY_SCENARIOS = {
   ionq: {
@@ -199,17 +174,19 @@ function PageTitle({ title, subtitle, children }) {
   );
 }
 
-function ScoreRing({ score = 42, label = "Readiness" }) {
+function ScoreRing({ score = null, label = "Readiness" }) {
+  const assessed = Number.isFinite(score);
+  const displayedScore = assessed ? score : 0;
   const ringColor =
-    score >= 70 ? "var(--green)" : score >= 50 ? "var(--amber)" : "var(--red)";
+    assessed ? (score >= 70 ? "var(--green)" : score >= 50 ? "var(--amber)" : "var(--red)") : "#9aa6ba";
   return (
     <div
       className="score-ring"
-      style={{ "--score": `${score * 3.6}deg`, "--ring-color": ringColor }}
+      style={{ "--score": `${displayedScore * 3.6}deg`, "--ring-color": ringColor }}
     >
       <div>
-        <strong>{score}</strong>
-        <span>/ 100</span>
+        <strong>{assessed ? score : "—"}</strong>
+        <span>{assessed ? "/ 100" : "Unscored"}</span>
         <small>{label}</small>
       </div>
     </div>
@@ -436,7 +413,7 @@ function ReadinessDrivers({ scores, setActive }) {
       <div className="card-heading">
         <span>
           <Activity />
-          What drives your {scores.readiness.score} readiness score?
+          {scores.readiness.assessed ? `What drives your ${scores.readiness.score} readiness score?` : "What will drive your readiness score?"}
         </span>
         <button
           className="text-link"
@@ -446,8 +423,9 @@ function ReadinessDrivers({ scores, setActive }) {
         </button>
       </div>
       <p>
-        Every bar is an observed input to the single Quantum Readiness Score.
-        The percentage at right is that input’s weight.
+        {scores.readiness.assessed
+          ? "Every bar is an observed input to the single Quantum Readiness Score. The percentage at right is that input’s weight."
+          : "No evidence has been collected yet. These are the five inputs QuantumSentinel will measure after onboarding and authorized collection."}
       </p>
       <div className="driver-list">
         {drivers.map(([label, value, weight]) => (
@@ -530,10 +508,11 @@ function QuantumContext() {
 function Overview({ data, scores, scans, setActive, openProfile }) {
   const [scenario, setScenario] = useState("ionq");
   const summary = data?.summary || {};
-  const total = summary.totalAssets || 15;
-  const critical = summary.criticalCount || 8;
-  const safe = summary.safeCount || 2;
+  const total = summary.totalAssets ?? data?.assets?.length ?? 0;
+  const critical = summary.criticalCount ?? 0;
+  const safe = summary.safeCount ?? 0;
   const readiness = scores.readiness;
+  const assessed = readiness.assessed;
   const horizon = QDAY_SCENARIOS[scenario];
   const horizonDisplay = formatHorizon(daysUntil(horizon.date));
   return (
@@ -565,7 +544,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
             <CircleHelp />
           </div>
           <div className="readiness-content">
-            <ScoreRing score={readiness.score} />
+            <ScoreRing score={assessed ? readiness.score : null} />
             <div>
               <h2
                 className={
@@ -579,10 +558,11 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
                 {readiness.classification}
               </h2>
               <p>
-                {critical} critical systems still depend on quantum-vulnerable
-                cryptography.
+                {assessed
+                  ? `${critical} critical systems still depend on quantum-vulnerable cryptography.`
+                  : "Complete onboarding and collect evidence to establish your first readiness baseline."}
               </p>
-              <span className="direction better">↑ {readiness.direction}</span>
+              {assessed && <span className="direction better">↑ {readiness.direction}</span>}
             </div>
           </div>
           <button
@@ -665,7 +645,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
               View all <ChevronRight />
             </button>
           </div>
-          {[
+          {assessed ? [
             ["api-gateway-prod-01", "RSA-2048", "Alex R.", "May 28"],
             ["vpn-concentrator-01", "ECDH P-256", "Maya K.", "May 30"],
             ["ca-root-internal", "RSA-4096", "Chris D.", "Jun 2"],
@@ -684,17 +664,17 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
               </span>
               <button>Open plan</button>
             </div>
-          ))}
+          )) : <p className="empty-scans">No priorities yet. Run an authorized scan to collect evidence.</p>}
         </article>
-        <button className="latest-scan" onClick={() => setActive("Exposure")}>
+        {scans.length > 0 && <button className="latest-scan" onClick={() => setActive("Exposure")}>
           <Globe2 />
           <span>
             <small>Latest scan evidence</small>
-            <b>{scans[0]?.targetLabel || "example.com"}</b> —{" "}
+            <b>{scans[0]?.targetLabel}</b> —{" "}
             <strong>Evidence saved</strong> — {timeAgo(scans[0]?.completedAt)}
           </span>
           <ChevronRight />
-        </button>
+        </button>}
       </section>
     </>
   );
@@ -1563,22 +1543,24 @@ function Readiness({ scores }) {
       />
       <section className="content-grid">
         <article className="card score-explainer">
-          <ScoreRing score={readiness.score} />
+          <ScoreRing score={readiness.assessed ? readiness.score : null} />
           <div>
             <span className="eyebrow">
               The Quantum Readiness Score · Higher is better
             </span>
             <h2>
-              {readiness.score} / 100 · {readiness.classification}
+              {readiness.assessed
+                ? `${readiness.score} / 100 · ${readiness.classification}`
+                : "Not yet assessed"}
             </h2>
             <p>
-              This is QuantumSentinel’s single headline score. It evaluates
-              modernization, inventory coverage, migration planning, governance,
-              and compensating controls from the available evidence.
+              {readiness.assessed
+                ? "This is QuantumSentinel’s single headline score. It evaluates modernization, inventory coverage, migration planning, governance, and compensating controls from the available evidence."
+                : "QuantumSentinel will calculate a score after real cryptographic evidence has been collected. Zero is not displayed because no evidence is not the same as zero readiness."}
             </p>
-            <span className="confidence-pill">
+            {readiness.assessed && <span className="confidence-pill">
               {scores.confidence.label} · {scores.confidence.coverage}% coverage
-            </span>
+            </span>}
           </div>
         </article>
         <article className="card methodology">
@@ -2125,7 +2107,7 @@ const REPORT_TYPES = [
 function buildReportRecord(type, scores, data) {
   const summary = data?.summary || {};
   const metrics = {
-    readinessScore: scores.readiness.score,
+    readinessScore: scores.readiness.assessed ? scores.readiness.score : "Not assessed",
     readinessClassification: scores.readiness.classification,
     evidenceConfidence: scores.confidence.level,
     evidenceCoveragePct: scores.confidence.coverage,
@@ -2224,7 +2206,10 @@ function Reports({ scores, data }) {
   const [generatorType, setGeneratorType] = useState("executive");
   const openReport = type => setSelectedReport(buildReportRecord(type, scores, data));
   const generatedReport = () => buildReportRecord(REPORT_TYPES.find(type => type.id === generatorType), scores, data);
-  return <><PageTitle title="Reports" subtitle="Clear, evidence-backed outputs centered on one Quantum Readiness Score."><button className="primary" onClick={() => setGeneratorOpen(true)}><FileDown />Generate report</button></PageTitle><section className="report-grid">{REPORT_TYPES.map((type, index) => <article className="card report-card" key={type.id}><span className={`report-icon r${index}`}><FileText /></span><div><h2>{type.title}</h2><p>{type.id === "executive" ? `Readiness ${scores.readiness.score}/100 · ${scores.readiness.classification} · ${scores.confidence.level} confidence` : type.description}</p><small>Live evidence · PDF & JSON</small></div><button className="secondary" onClick={() => openReport(type)}>Open <ChevronRight /></button></article>)}</section>{generatorOpen && <div className="plan-backdrop"><div className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Generate evidence report"><div className="plan-dialog-heading"><div><span className="eyebrow">Report generator</span><h2>Choose an evidence package</h2><p>Exports use the current readiness and inventory snapshot.</p></div><button className="icon-button" onClick={() => setGeneratorOpen(false)} aria-label="Close report generator">×</button></div><label>Report type<select value={generatorType} onChange={event => setGeneratorType(event.target.value)}>{REPORT_TYPES.map(type => <option value={type.id} key={type.id}>{type.title}</option>)}</select></label><div className="plan-actions"><button className="secondary" onClick={() => downloadReportJson(generatedReport())}>Download JSON</button><button className="primary" onClick={() => downloadReportPdf(generatedReport())}><FileDown />Generate PDF</button></div></div></div>}{selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Evidence report</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><dl>{Object.entries(selectedReport.metrics).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase())}</dt><dd>{value}</dd></div>)}</dl><h3>Report sections</h3><div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}</>;
+  const posture = scores.readiness.assessed
+    ? `Readiness ${scores.readiness.score}/100 · ${scores.readiness.classification} · ${scores.confidence.level} confidence`
+    : "Not yet assessed · collect evidence before generating a posture score";
+  return <><PageTitle title="Reports" subtitle="Clear, evidence-backed outputs centered on one Quantum Readiness Score."><button className="primary" onClick={() => setGeneratorOpen(true)}><FileDown />Generate report</button></PageTitle><section className="report-grid">{REPORT_TYPES.map((type, index) => <article className="card report-card" key={type.id}><span className={`report-icon r${index}`}><FileText /></span><div><h2>{type.title}</h2><p>{type.id === "executive" ? posture : type.description}</p><small>Live evidence · PDF & JSON</small></div><button className="secondary" onClick={() => openReport(type)}>Open <ChevronRight /></button></article>)}</section>{generatorOpen && <div className="plan-backdrop"><div className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Generate evidence report"><div className="plan-dialog-heading"><div><span className="eyebrow">Report generator</span><h2>Choose an evidence package</h2><p>Exports use the current readiness and inventory snapshot.</p></div><button className="icon-button" onClick={() => setGeneratorOpen(false)} aria-label="Close report generator">×</button></div><label>Report type<select value={generatorType} onChange={event => setGeneratorType(event.target.value)}>{REPORT_TYPES.map(type => <option value={type.id} key={type.id}>{type.title}</option>)}</select></label><div className="plan-actions"><button className="secondary" onClick={() => downloadReportJson(generatedReport())}>Download JSON</button><button className="primary" onClick={() => downloadReportPdf(generatedReport())}><FileDown />Generate PDF</button></div></div></div>}{selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Evidence report</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><dl>{Object.entries(selectedReport.metrics).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase())}</dt><dd>{value}</dd></div>)}</dl><h3>Report sections</h3><div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}</>;
 }
 
 export default function App() {

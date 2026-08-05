@@ -1066,19 +1066,21 @@ export function createApiServer({ datastore = null, scheduler = null, schedulerO
           sendCollection(response, await activeAlerts(datastore));
           break;
         case "/api/compliance":
-          sendCollection(response, COMPLIANCE);
+          sendCollection(response, datastore ? [] : COMPLIANCE);
           break;
         case "/api/trends":
-          sendCollection(response, TREND_DATA);
+          sendCollection(response, datastore ? [] : TREND_DATA);
           break;
         case "/api/algorithms":
-          sendCollection(response, ALGO_DIST);
+          sendCollection(response, datastore ? [] : ALGO_DIST);
           break;
         case "/api/summary":
           sendJson(response, 200, {
             data: deriveSummary({
               assets: datastore ? await datastore.listAssets() : ASSETS,
               alerts: await activeAlerts(datastore),
+              compliance: datastore ? [] : COMPLIANCE,
+              trends: datastore ? [] : TREND_DATA,
             }),
           });
           break;

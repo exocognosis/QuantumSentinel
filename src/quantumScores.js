@@ -39,7 +39,7 @@ export function deriveQuantumScores(data = {}) {
   const confidence = !total || data.isFallback ? "Low" : coverage >= 90 && total >= 10 ? "Medium" : "Low";
 
   return {
-    readiness: { score: readiness, classification: readinessClassification(readiness), direction: "Higher is better", components: readinessComponents },
+    readiness: { assessed: total > 0, score: readiness, classification: total > 0 ? readinessClassification(readiness) : "Not yet assessed", direction: "Higher is better", components: readinessComponents },
     confidence: { level: confidence, coverage, label: `${confidence} evidence confidence` },
   };
 }

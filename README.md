@@ -1,6 +1,16 @@
 # QuantumSentinel
 
-Local prototype for a post-quantum cryptography readiness dashboard and assessment appliance.
+An evidence-backed post-quantum cryptography readiness dashboard and assessment appliance.
+
+## Install and launch
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/exocognosis/QuantumSentinel/main/install.sh | sh
+```
+
+That single command downloads Quantum Sentinel into `./QuantumSentinel`, installs its dependencies, builds it, starts the API and dashboard, and opens `http://127.0.0.1:5173`. Press `Ctrl+C` to stop it. Run the same command later to update and relaunch it safely.
+
+Requirements: Git and Node.js 20.19 or newer. To choose a different installation location, set `QS_INSTALL_DIR` before the command.
 
 ## Q-Day Repository Scanner
 
@@ -53,15 +63,14 @@ Status:
 ## Run Locally
 
 ```sh
-npm install
+npm ci
 npm run build
-npm run api
-npm run web
+npm start
 ```
 
 Open `http://127.0.0.1:5173`.
 
-The API listens on `http://127.0.0.1:8787`; the web server proxies `/api` to that API. Set `HOST`, `PORT`, or `QS_DATASTORE_PATH` when you need a different bind address, API port, or datastore file.
+The launcher starts both services and opens the dashboard. The API listens on `http://127.0.0.1:8787`; the web server proxies `/api` to that API. Set `HOST`, `PORT`, `WEB_PORT`, `QS_NO_OPEN=1`, or `QS_DATASTORE_PATH` when you need a different bind address, API port, dashboard port, browser behavior, or datastore file.
 
 ## Development Commands
 

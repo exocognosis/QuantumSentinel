@@ -399,9 +399,15 @@ function OrganizationProfile({ initialProfile, onSave, onClose }) {
   );
 }
 
-function ReadinessDrivers({ scores, setActive }) {
+function ReadinessDrivers({ scores, setActive, scanScope = false }) {
   const components = scores.readiness.components;
-  const drivers = [
+  const drivers = scanScope ? [
+    ["Algorithm posture", components.cryptoModernization, 45],
+    ["Evidence completeness", components.inventoryCoverage, 20],
+    ["Protocol posture", components.migrationPlanning, 15],
+    ["Certificate posture", components.governanceMaturity, 10],
+    ["Forward secrecy", components.compensatingControls, 10],
+  ] : [
     ["Crypto modernization", components.cryptoModernization, 35],
     ["Inventory coverage", components.inventoryCoverage, 20],
     ["Migration planning", components.migrationPlanning, 20],
@@ -413,7 +419,7 @@ function ReadinessDrivers({ scores, setActive }) {
       <div className="card-heading">
         <span>
           <Activity />
-          {scores.readiness.assessed ? `What drives your ${scores.readiness.score} readiness score?` : "What will drive your readiness score?"}
+          {scores.readiness.assessed ? `What drives this ${scores.readiness.score} ${scanScope ? "posture" : "readiness"} score?` : `What will drive the ${scanScope ? "posture" : "readiness"} score?`}
         </span>
         <button
           className="text-link"
@@ -424,7 +430,9 @@ function ReadinessDrivers({ scores, setActive }) {
       </div>
       <p>
         {scores.readiness.assessed
-          ? "Every bar is an observed input to the single Quantum Readiness Score. The percentage at right is that input’s weight."
+          ? scanScope
+            ? "This target score uses only cryptographic evidence observed during the selected scan. It is not an organization-wide readiness assessment."
+            : "Every bar is an observed input to the single Quantum Readiness Score. The percentage at right is that input’s weight."
           : "No evidence has been collected yet. These are the five inputs QuantumSentinel will measure after onboarding and authorized collection."}
       </p>
       <div className="driver-list">
@@ -441,6 +449,30 @@ function ReadinessDrivers({ scores, setActive }) {
       </div>
     </article>
   );
+}
+
+function deriveObservedCryptoPosture(assets = []) {
+  const averageValue = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const algorithmValue = asset => ["QUANTUM-SAFE"].includes(asset.cls) ? 100 : asset.cls === "HYBRID" ? 80 : asset.cls === "UNKNOWN" ? 20 : 10;
+  const completenessValue = asset => ["algo", "proto", "cls", "prio", "risk"].filter(field => asset[field] != null && asset[field] !== "" && asset[field] !== "Unknown").length * 20;
+  const protocolValue = asset => /1\.3/.test(asset.proto) ? 100 : /1\.2/.test(asset.proto) ? 70 : asset.proto && asset.proto !== "Unknown" ? 35 : 0;
+  const certificateValue = asset => asset.algo && asset.algo !== "Unknown" ? 100 : 0;
+  const components = {
+    cryptoModernization: averageValue(assets.map(algorithmValue)),
+    inventoryCoverage: averageValue(assets.map(completenessValue)),
+    migrationPlanning: averageValue(assets.map(protocolValue)),
+    governanceMaturity: averageValue(assets.map(certificateValue)),
+    compensatingControls: averageValue(assets.map(asset => asset.pfs ? 100 : 0)),
+  };
+  const score = Math.round(
+    components.cryptoModernization * .45 +
+    components.inventoryCoverage * .20 +
+    components.migrationPlanning * .15 +
+    components.governanceMaturity * .10 +
+    components.compensatingControls * .10
+  );
+  const classification = score >= 85 ? "Strong observed posture" : score >= 70 ? "Moderate observed posture" : score >= 50 ? "Transitional posture" : score >= 25 ? "Elevated exposure" : "High exposure";
+  return { readiness: { assessed: assets.length > 0, score, classification, direction: "Higher is better", components } };
 }
 
 const QUANTUM_CONTEXT = [
@@ -507,11 +539,25 @@ function QuantumContext() {
 
 function Overview({ data, scores, scans, setActive, openProfile }) {
   const [scenario, setScenario] = useState("ionq");
-  const summary = data?.summary || {};
-  const total = summary.totalAssets ?? data?.assets?.length ?? 0;
-  const critical = summary.criticalCount ?? 0;
-  const safe = summary.safeCount ?? 0;
-  const readiness = scores.readiness;
+  const [scoreScope, setScoreScope] = useState("organization");
+  const assets = data?.assets || [];
+  const completedScans = scans.filter(scan => scan.status === "COMPLETED" && scan.result);
+  const selectedScan = completedScans.find(scan => scan.id === scoreScope) || null;
+  const scopedHosts = new Set(selectedScan ? [
+    selectedScan.target?.host,
+    ...(selectedScan.target?.hosts || []),
+    ...(selectedScan.result?.observations || []).map(observation => observation.host),
+  ].filter(Boolean) : []);
+  const scopedAssets = selectedScan
+    ? assets.filter(asset => scopedHosts.has(asset.hostname))
+    : assets;
+  const displayScores = selectedScan
+    ? deriveObservedCryptoPosture(scopedAssets)
+    : scores;
+  const total = scopedAssets.length;
+  const critical = scopedAssets.filter(asset => ["CRITICAL", "HIGH"].includes(String(asset.prio).toUpperCase())).length;
+  const safe = scopedAssets.filter(asset => ["HYBRID", "QUANTUM-SAFE"].includes(asset.cls)).length;
+  const readiness = displayScores.readiness;
   const assessed = readiness.assessed;
   const horizon = QDAY_SCENARIOS[scenario];
   const horizonDisplay = formatHorizon(daysUntil(horizon.date));
@@ -539,12 +585,23 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
           <div className="card-heading">
             <span>
               <ShieldCheck />
-              Q-Day Readiness
+              {selectedScan ? "Observed crypto posture" : "Q-Day Readiness"}
             </span>
             <CircleHelp />
           </div>
+          <label className="score-scope">
+            Score scope
+            <select value={scoreScope} onChange={event => setScoreScope(event.target.value)}>
+              <option value="organization">Overall organization</option>
+              {completedScans.map(scan => (
+                <option value={scan.id} key={scan.id}>
+                  {scan.type === "tls" ? "Website" : scan.type === "device" ? "This device" : "Authorized network"} · {scan.targetLabel}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="readiness-content">
-            <ScoreRing score={assessed ? readiness.score : null} />
+            <ScoreRing score={assessed ? readiness.score : null} label={selectedScan ? "Posture" : "Readiness"} />
             <div>
               <h2
                 className={
@@ -559,7 +616,9 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
               </h2>
               <p>
                 {assessed
-                  ? `${critical} critical systems still depend on quantum-vulnerable cryptography.`
+                  ? selectedScan
+                    ? `${total} observed asset${total === 1 ? "" : "s"} in this scan · ${critical} high-priority exposure${critical === 1 ? "" : "s"}.`
+                    : `${critical} critical systems still depend on quantum-vulnerable cryptography.`
                   : "Complete onboarding and collect evidence to establish your first readiness baseline."}
               </p>
               {assessed && <span className="direction better">↑ {readiness.direction}</span>}
@@ -631,7 +690,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
           tone="green"
           trend={`${total - safe} still need modernization`}
         />
-        <ReadinessDrivers scores={scores} setActive={setActive} />
+        <ReadinessDrivers scores={displayScores} setActive={setActive} scanScope={Boolean(selectedScan)} />
         <article className="card priorities">
           <div className="card-heading">
             <span>
@@ -645,26 +704,22 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
               View all <ChevronRight />
             </button>
           </div>
-          {assessed ? [
-            ["api-gateway-prod-01", "RSA-2048", "Alex R.", "May 28"],
-            ["vpn-concentrator-01", "ECDH P-256", "Maya K.", "May 30"],
-            ["ca-root-internal", "RSA-4096", "Chris D.", "Jun 2"],
-          ].map((r, i) => (
-            <div className="priority-row" key={r[0]}>
-              <span className="severity">Critical</span>
+          {assessed && scopedAssets.length ? [...scopedAssets].sort((a, b) => Number(b.risk || 0) - Number(a.risk || 0)).slice(0, 3).map((asset, i) => (
+            <div className="priority-row" key={asset.id}>
+              <span className="severity">{asset.prio || "Review"}</span>
               <div>
-                <b>{r[0]}</b>
-                <small>{r[1]}</small>
+                <b>{asset.hostname}</b>
+                <small>{asset.algo || "Unknown cryptography"}</small>
               </div>
-              <span className={`mini-avatar a${i}`}>{r[2][0]}</span>
-              <span>{r[2]}</span>
+              <span className={`mini-avatar a${i}`}>—</span>
+              <span>Unassigned</span>
               <span>
                 <Clock3 />
-                {r[3]}
+                Review
               </span>
-              <button>Open plan</button>
+              <button onClick={() => setActive("Remediation")}>Open plan</button>
             </div>
-          )) : <p className="empty-scans">No priorities yet. Run an authorized scan to collect evidence.</p>}
+          )) : <p className="empty-scans">No priorities in this scope. Run an authorized scan to collect evidence.</p>}
         </article>
         {scans.length > 0 && <button className="latest-scan" onClick={() => setActive("Exposure")}>
           <Globe2 />

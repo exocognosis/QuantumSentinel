@@ -1,118 +1,50 @@
-# QuantumSentinel Dashboard Design QA
+**Source visual truth**
 
-## Evidence
+- `/var/folders/bj/_phs_kq57hv8lw5bg8mhqn7r0000gn/T/codex-clipboard-f6ac4eb0-cfab-42a4-b18e-b54bdc33017d.png`
+- Source pixels: 3420 x 2214. Desktop dark-theme Overview state.
 
-- Source visual truth: `/Users/rickglenn/.codex/generated_images/019fd1fe-9e65-7400-b978-8d9994aa8578/exec-ec1f217e-b053-49c9-9c44-373d4759e1e4.png`
-- Implementation screenshot: `/Users/rickglenn/Documents/QuantumSentinel/implementation-dashboard-full.png`
-- Combined comparison: `/Users/rickglenn/Documents/QuantumSentinel/design-comparison-final.png`
-- Target viewport: 1440 x 1024 desktop
-- Browser CSS viewport: 1422 x 800; full-page CSS capture: 1422 x 1203
-- Source pixels: 1487 x 1058
-- Implementation full-page pixels: 1580 x 1337
-- Density normalization: both sides scaled/cropped to a common 1422 x 1012 comparison canvas
-- State: Scan selected, public website selected, example.com target, monitoring enabled
+**Rendered implementation**
 
-## Findings
+- `/Users/rickglenn/Documents/QuantumSentinel/implementation-score-scope.png`
+- Implementation pixels: 2000 x 1385. Desktop dark-theme Overview state with onboarding open and the website scope selected.
+- Browser-rendered at `http://127.0.0.1:15174/` in the Codex in-app browser.
+- Density normalization: both captures were compared as full-width desktop layouts; differences caused by browser chrome and pixel density were excluded.
 
-- No actionable P0, P1, or P2 differences remain.
-- The six-item navigation, scan composer, active-state card, recent scans, check methodology, monitoring, and assessment banner preserve the selected design's hierarchy and interaction model.
-- The implementation deliberately shows a truthful Ready state before a scan rather than fabricating an active scan on initial load. Starting a scan drives progress, lifecycle steps, completion status, and the recent-scans list.
-- Fonts and typography: DM Sans closely matches the reference's friendly enterprise sans serif. Heading hierarchy, weights, wrapping, and small-label readability are consistent.
-- Spacing and layout rhythm: card grid, gutters, radii, controls, section spacing, and alignment closely match. The implementation uses slightly taller scan cards to accommodate responsive behavior and live status content.
-- Colors and visual tokens: white and pale-blue surfaces, navy text, electric-blue actions, semantic amber/red/green states, borders, and shadows match the reference direction.
-- Image and icon fidelity: the design contains no required photographic imagery. Interface symbols use the installed Lucide icon library consistently; the brand mark uses the same icon system rather than a placeholder asset.
-- Copy and content: headings, mode choices, consent language, scan steps, scoring concepts, monitoring rows, and bottom insight match the selected concept. Live API records replace some mock recent-scan rows when available.
+**Full-view comparison evidence**
 
-## Interaction and Runtime Verification
+- The existing navigation, dark palette, card grid, typography hierarchy, icons, radii, and dashboard density remain consistent with the source.
+- The readiness card gains one native select control without changing the surrounding grid or pushing primary actions below the fold.
+- The selected scope consistently updates the headline card, three adjacent metrics, score drivers, and priority list.
 
-- Public website, This device, and Authorized network modes switch targets correctly.
-- Authorized network mode populates a bounded target list.
-- Q-Day Readiness navigation opens the score methodology and returns to Scan.
-- Start scan invokes the existing probe API and updates progress, completion state, and recent scans.
-- Monitoring switch is interactive.
-- Fresh browser session console errors checked: none.
-- Production source build/typecheck completed; repository test suite: 136 passed, 0 failed.
+**Focused region comparison evidence**
 
-## Comparison History
+- The selected website state visibly changes the card title to `Observed crypto posture`, the ring label to `Posture`, and the explanatory copy to a one-target evidence boundary.
+- The scope selector exposes `Overall organization`, `Website`, and `Authorized network` choices from live saved scans.
+- The score-driver card changes from organizational readiness inputs to algorithm, evidence, protocol, certificate, and forward-secrecy inputs.
 
-1. Initial preview was blocked because an older static bundle was being served.
-2. Rebuilt the selected source in a clean local preview directory and captured the actual implementation.
-3. Fixed a P2 scan lifecycle mismatch where a fast-completing probe could display a Ready label beside an incomplete percentage. Added an explicit Completed state and deterministic 100% completion.
-4. Rebuilt, retested the navigation and scan modes, and verified a fresh browser session with no console errors.
-5. Replaced the conflicting hard-coded readiness values with canonical, independently directed Risk and Readiness metrics derived from shared evidence. Removed letter grades and added Evidence Confidence.
-6. Made Q-Day horizon scenarios recalculate their dates and day counts, added an accessible moving-threshold explanation, and added a user-controlled organizational readiness deadline. Browser evidence: `/Users/rickglenn/Documents/QuantumSentinel/implementation-readiness-panel.png`.
-7. Replaced the obsolete hard-coded readiness trend with the evidence-backed crypto-modernization trend. Verified scenario selection, readiness timeline input, all six navigation panels, and a clean browser console.
+**Interaction verification**
 
-## Follow-up Polish
+- Selected `Website - rsa2048.badssl.com:443` through the native scope selector.
+- Verified the score changed to 55 and the card, metrics, drivers, and priorities changed to the selected target.
+- Verified the rendered page contains no browser console errors.
 
-- P3: replace the icon-based temporary brand mark with a final supplied QuantumSentinel vector logo when a canonical asset is available.
-- P3: consider a compact activity animation during longer network discovery jobs.
+**Findings**
 
-final result: passed
+- No actionable P0, P1, or P2 mismatch remains.
+- P3: long target names may need truncation in unusually narrow desktop widths; the native select currently remains within the card boundary.
 
-## 2026-08-05 — Collector divergence pass
+**Comparison history**
 
-- Public website options now expose a single TLS port and external timeout.
-- Device options now expose loopback scope, up to eight local service ports, and a short local timeout; the backend records platform, architecture, Node, and OpenSSL runtime evidence alongside loopback observations.
-- Authorized network options now expose up to eight service ports, per-host timeout, maximum targets, and bounded concurrency.
-- Backend network discovery now probes the host-port matrix with a maximum concurrency of eight and reports host, port, reachable, TLS, and failure observations separately.
-- Verified all three option sets in the browser and exercised both new backend collectors against the live local API.
+- Initial implementation labeled the selected target ring `Readiness`, which could preserve the original ambiguity.
+- Fixed the ring label to `Posture` for scan scopes and recaptured the implementation.
+- Post-fix evidence shows organization-wide readiness and target-level observed posture are visibly distinct.
 
-final result: passed
+**Implementation checklist**
 
-## 2026-08-05 — Scan-mode differentiation pass
-
-- Public website, local device, and authorized network now have distinct titles, evidence stages, scope statements, icons, observation lists, and interpretation copy.
-- Local device is accurately framed as a two-address loopback check on one selected port, not a device-wide cryptographic inventory.
-- Authorized network is accurately framed as an explicit host-list and single-port TLS/TCP discovery, not network enumeration or port sweeping.
-- Switching modes clears stale progress, result, failure, and interpretation state.
-- Verified all three rendered modes and their evidence boundaries in the browser.
-
-final result: passed
-
-## 2026-08-05 — Scan target entry pass
-
-- Public target input now starts empty with the gray placeholder `For example www.google.com`.
-- Placeholder disappears on entry, Start scan remains disabled while empty, and enables after typing.
-- Empty scan state now reads `No target selected` rather than implying that example.com was chosen.
-
-final result: passed
-
-## 2026-08-05 — Public scan interpretation pass
-
-- Renamed the public flow to Public TLS posture scan and replaced implied full-chain/readiness stages with the four operations the probe actually performs.
-- Added an explicit scope statement separating endpoint evidence from organization-wide readiness.
-- Replaced the generic bottom banner with a state-aware interpretation card that summarizes observed TLS protocol, certificate algorithm, and forward-secrecy evidence after a successful scan.
-- The interpretation now explains the limitation and routes users to the next authorized internal-evidence step.
-- Updated What we check to What we observe with implementation-faithful descriptions.
-
-final result: passed
-
-## 2026-08-05 — Probe truth-state pass
-
-- Verified a live scan against `definitely-not-real-quantumsentinel.invalid` returns the backend DNS failure rather than fabricated results.
-- Failed probes now stop at the TLS handshake, display `Failed`, label later stages `Not run`, and state that no evidence was collected.
-- Failed and no-service probes are excluded from successful evidence history.
-- Verified the failure state in the browser with no console errors.
-
-final result: passed
-
-## 2026-08-05 — Overview context pass
-
-- Replaced the unexplained Evidence Confidence card with Quantum-safe assets: a concrete `2 of 15` coverage measure and the remaining modernization count.
-- Replaced the disconnected historical trend with a readiness-driver breakdown tied directly to the current score, its five evidence inputs, and their calculation weights.
-- Added a direct View calculation action to the Q-Day Readiness methodology.
-- Verified the rendered Overview and browser console; no P0/P1/P2 issues or console errors remain.
-
-final result: passed
-
-## 2026-08-05 — Single-score and organization onboarding pass
-
-- Source: user-selected card dashboard plus supplied Dytallix organization-profile reference.
-- Implemented a single organization-level Quantum Readiness Score; exposure is now communicated through finding counts, HNDL candidates, protected assets, and severity labels.
-- Added a left-side Organization Onboarding panel attached to Overview. It disappears after save and reopens from the Overview header.
-- Verified the geography + industry interaction: United States + Finance automatically displayed NIST CSF 2.0, NIST IR 8547, GLBA, NYDFS 23 NYCRR 500, and PCI DSS 4.0.
-- Verified save, disappearance, reopen, preserved values, responsive drawer layout, and zero browser console warnings/errors.
-- P0/P1/P2 issues: none remaining.
+- [x] Preserve the source dashboard design system.
+- [x] Add a functional score-scope selector.
+- [x] Separate organization readiness from scan-level crypto posture.
+- [x] Filter adjacent counts, drivers, and priorities with the selected scope.
+- [x] Verify the interaction in the in-app browser.
 
 final result: passed

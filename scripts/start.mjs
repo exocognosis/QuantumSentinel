@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -9,6 +9,14 @@ const requestedApiPort = Number(process.env.PORT || 8787);
 const requestedWebPort = Number(process.env.WEB_PORT || 5173);
 const explicitlySetApiPort = Boolean(process.env.PORT);
 const explicitlySetWebPort = Boolean(process.env.WEB_PORT);
+
+console.log("Preparing the latest Quantum Sentinel dashboard...");
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const build = spawnSync(npmCommand, ["run", "build"], { stdio: "inherit" });
+if (build.error || build.status !== 0) {
+  console.error("Quantum Sentinel could not build the dashboard.");
+  process.exit(build.status || 1);
+}
 
 async function portIsAvailable(port) {
   return new Promise((resolve, reject) => {

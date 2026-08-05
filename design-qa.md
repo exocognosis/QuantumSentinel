@@ -39,6 +39,9 @@
 2. Rebuilt the selected source in a clean local preview directory and captured the actual implementation.
 3. Fixed a P2 scan lifecycle mismatch where a fast-completing probe could display a Ready label beside an incomplete percentage. Added an explicit Completed state and deterministic 100% completion.
 4. Rebuilt, retested the navigation and scan modes, and verified a fresh browser session with no console errors.
+5. Replaced the conflicting hard-coded readiness values with canonical, independently directed Risk and Readiness metrics derived from shared evidence. Removed letter grades and added Evidence Confidence.
+6. Made Q-Day horizon scenarios recalculate their dates and day counts, added an accessible moving-threshold explanation, and added a user-controlled organizational readiness deadline. Browser evidence: `/Users/rickglenn/Documents/QuantumSentinel/implementation-readiness-panel.png`.
+7. Replaced the obsolete hard-coded readiness trend with the evidence-backed crypto-modernization trend. Verified scenario selection, readiness timeline input, all six navigation panels, and a clean browser console.
 
 ## Follow-up Polish
 

@@ -16,6 +16,7 @@ dist-ssr
 *.local
 .quantumsentinel
 implementation-dashboard*.png
+implementation-readiness*.png
 design-comparison*.png
 
 # Editor directories and files

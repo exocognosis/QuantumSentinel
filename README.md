@@ -10,9 +10,12 @@ QuantumSentinel includes an evidence-backed static scanner for cryptographic mig
 npm run scan -- /path/to/repository
 npm run scan -- /path/to/repository --output quantum-readiness.json
 npm run scan -- /path/to/repository --html quantum-readiness.html
+npm run scan -- /path/to/repository --datastore .quantumsentinel/datastore.db
 ```
 
 Every observation includes its file, line, evidence confidence, likely usage context, rationale, and migration guidance. The readiness score is transparent and deliberately assigns lower weight to documentation and dependency references. It is a prioritization aid, not a certification or substitute for runtime and architectural review.
+
+The optional `--datastore` mode ingests repository evidence into the existing asset inventory, remediation queue, CBOM snapshots, audit chain, and report APIs. Files are read only by the local CLI; the HTTP API does not expose an arbitrary filesystem-scanning endpoint.
 
 ## Product State
 

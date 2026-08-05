@@ -142,7 +142,7 @@ export function buildCbomFromAssets(assets) {
     count: data.length,
     summary: {
       totalComponents: data.length,
-      vulnerableComponents: sortedAssets.filter((asset) => asset.cls !== "QUANTUM-SAFE" && asset.cls !== "HYBRID").length,
+      vulnerableComponents: sortedAssets.filter((asset) => !["QUANTUM-SAFE", "QUANTUM-RESISTANT", "PQC", "HYBRID"].includes(asset.cls)).length,
       pfsEnabled: countBy(sortedAssets, "pfs", true),
       requiresHardwareRefresh: countBy(sortedAssets, "migration", "REQUIRES HW REFRESH"),
       migrationTargets,

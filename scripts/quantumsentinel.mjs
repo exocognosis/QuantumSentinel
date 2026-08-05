@@ -2,18 +2,21 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
+import { createDatastore } from "../server/datastore.js";
 import { scanRepository } from "../server/repositoryScanner.js";
+import { persistRepositoryScan } from "../server/repositoryScanPersistence.js";
 
 function usage() {
   return `QuantumSentinel Q-Day Scanner
 
 Usage:
-  quantumsentinel scan [directory] [--json] [--output path] [--html path]
+  quantumsentinel scan [directory] [--json] [--output path] [--html path] [--datastore path]
 
 Options:
   --json          Print the complete JSON report to stdout
   --output, -o    Write the complete JSON report to a file
   --html          Write a self-contained HTML report
+  --datastore     Persist scan evidence into a QuantumSentinel datastore
   --help, -h      Show this help
 `;
 }
@@ -25,18 +28,21 @@ function parseArguments(argv) {
   let target = ".";
   let output = null;
   let html = null;
+  let datastore = null;
   let json = false;
   while (args.length) {
     const value = args.shift();
     if (value === "--json") json = true;
     else if (value === "--output" || value === "-o") output = args.shift();
     else if (value === "--html") html = args.shift();
+    else if (value === "--datastore") datastore = args.shift();
     else if (value.startsWith("-")) throw new Error(`unknown option: ${value}`);
     else target = value;
   }
   if (output === undefined) throw new Error("--output requires a path");
   if (html === undefined) throw new Error("--html requires a path");
-  return { target, output, html, json };
+  if (datastore === undefined) throw new Error("--datastore requires a path");
+  return { target, output, html, datastore, json };
 }
 function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -68,6 +74,15 @@ try {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) { process.stdout.write(usage()); process.exit(0); }
   const report = await scanRepository(resolve(options.target));
+  let persistence = null;
+  if (options.datastore) {
+    const datastore = await createDatastore({ filePath: resolve(options.datastore) });
+    try {
+      persistence = await persistRepositoryScan(datastore, report, { actor: "quantumsentinel-cli" });
+    } finally {
+      await datastore.close();
+    }
+  }
   if (options.output) {
     const output = resolve(options.output);
     await mkdir(dirname(output), { recursive: true });
@@ -81,6 +96,10 @@ try {
   process.stdout.write(`${options.json ? JSON.stringify(report, null, 2) : humanSummary(report)}\n`);
   if (options.output && !options.json) process.stdout.write(`Report: ${resolve(options.output)}\n`);
   if (options.html && !options.json) process.stdout.write(`HTML: ${resolve(options.html)}\n`);
+  if (persistence && !options.json) {
+    const saved = persistence.persistence;
+    process.stdout.write(`Persisted: ${saved.createdAssets} new assets, ${saved.updatedAssets} updated assets, ${saved.createdFindings} new findings, ${saved.refreshedFindings} refreshed findings\n`);
+  }
 } catch (error) {
   process.stderr.write(`QuantumSentinel: ${error.message}\n\n${usage()}`);
   process.exitCode = 1;

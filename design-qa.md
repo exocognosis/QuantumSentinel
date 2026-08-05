@@ -50,6 +50,15 @@
 
 final result: passed
 
+## 2026-08-05 — Probe truth-state pass
+
+- Verified a live scan against `definitely-not-real-quantumsentinel.invalid` returns the backend DNS failure rather than fabricated results.
+- Failed probes now stop at the TLS handshake, display `Failed`, label later stages `Not run`, and state that no evidence was collected.
+- Failed and no-service probes are excluded from successful evidence history.
+- Verified the failure state in the browser with no console errors.
+
+final result: passed
+
 ## 2026-08-05 — Overview context pass
 
 - Replaced the unexplained Evidence Confidence card with Quantum-safe assets: a concrete `2 of 15` coverage measure and the remaining modernization count.

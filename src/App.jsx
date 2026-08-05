@@ -15,6 +15,7 @@ import {
   KeyRound,
   Laptop,
   Network,
+  Moon,
   Play,
   RefreshCw,
   Search,
@@ -23,6 +24,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Sun,
   Target,
   Wrench,
 } from "lucide-react";
@@ -150,7 +152,7 @@ function Brand() {
   );
 }
 
-function Header({ active, setActive }) {
+function Header({ active, setActive, theme, toggleTheme }) {
   return (
     <header className="app-header">
       <Brand />
@@ -171,6 +173,15 @@ function Header({ active, setActive }) {
           <i />
           System live
         </span>
+        <button
+          className="theme-toggle"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+          aria-pressed={theme === "dark"}
+        >
+          {theme === "light" ? <Moon /> : <Sun />}
+          {theme === "light" ? "Dark" : "Light"}
+        </button>
       </div>
     </header>
   );
@@ -2196,6 +2207,17 @@ export default function App() {
   const [scans, setScans] = useState(FALLBACK_SCANS);
   const [profile, setProfile] = useState(savedProfile);
   const [profileOpen, setProfileOpen] = useState(() => !savedProfile().name);
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = localStorage.getItem("quantumSentinel.theme");
+    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("quantumSentinel.theme", theme);
+  }, [theme]);
   useEffect(() => {
     Promise.all([loadApplianceData(), loadProbeJobs()]).then(([d, j]) => {
       setData(d);
@@ -2234,7 +2256,12 @@ export default function App() {
     <div
       className={`app ${profileOpen && active === "Overview" ? "profile-open" : ""}`}
     >
-      <Header active={active} setActive={setActive} />
+      <Header
+        active={active}
+        setActive={setActive}
+        theme={theme}
+        toggleTheme={() => setTheme(current => current === "light" ? "dark" : "light")}
+      />
       {profileOpen && active === "Overview" && (
         <OrganizationProfile
           initialProfile={profile}

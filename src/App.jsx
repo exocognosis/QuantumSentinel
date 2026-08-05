@@ -1726,70 +1726,103 @@ function Exposure({ data }) {
 }
 
 function Remediation() {
+  const seedActions = [
+    { id: "rsa-gateway", title: "Replace RSA key exchange", asset: "api-gateway-prod-01", owner: "Alex R.", due: "2026-08-12", status: "In progress", urgency: 100, target: "Hybrid TLS with ML-KEM" },
+    { id: "hybrid-vpn", title: "Pilot hybrid TLS", asset: "vpn-concentrator-01", owner: "Maya K.", due: "2026-08-18", status: "Planned", urgency: 82, target: "ML-KEM hybrid key exchange" },
+    { id: "root-hierarchy", title: "Rotate root hierarchy", asset: "ca-root-internal", owner: "Chris D.", due: "2026-08-09", status: "Blocked", urgency: 94, target: "PQC-ready certificate hierarchy" },
+  ];
+  const [actions, setActions] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("quantumsentinel-remediation-actions") || "null");
+      return Array.isArray(stored) && stored.length ? stored : seedActions;
+    } catch {
+      return seedActions;
+    }
+  });
+  const [sortBy, setSortBy] = useState("urgency");
+  const [planOpen, setPlanOpen] = useState(false);
+  const [selectedAction, setSelectedAction] = useState(null);
+  const [planName, setPlanName] = useState("Critical systems migration");
+  const [planOwner, setPlanOwner] = useState("");
+  const [planDeadline, setPlanDeadline] = useState("2026-12-31");
+  useEffect(() => {
+    localStorage.setItem("quantumsentinel-remediation-actions", JSON.stringify(actions));
+  }, [actions]);
+  const statusOrder = { Blocked: 0, "In progress": 1, Planned: 2, Completed: 3 };
+  const sortedActions = [...actions].sort((a, b) => {
+    if (sortBy === "due") return a.due.localeCompare(b.due);
+    if (sortBy === "status") return statusOrder[a.status] - statusOrder[b.status];
+    if (sortBy === "owner") return a.owner.localeCompare(b.owner);
+    return b.urgency - a.urgency;
+  });
+  const createPlan = (event) => {
+    event.preventDefault();
+    const newAction = {
+      id: `plan-${Date.now()}`,
+      title: planName.trim(),
+      asset: "Organization-wide",
+      owner: planOwner.trim() || "Unassigned",
+      due: planDeadline,
+      status: "Planned",
+      urgency: 75,
+      target: "Inventory, pilot, and migrate priority cryptography",
+    };
+    setActions(current => [newAction, ...current]);
+    setPlanOpen(false);
+    setSelectedAction(newAction);
+  };
+  const openCount = actions.filter(action => action.status !== "Completed").length;
+  const progressCount = actions.filter(action => action.status === "In progress").length;
+  const completedCount = actions.filter(action => action.status === "Completed").length;
   return (
     <>
       <PageTitle
         title="Remediation"
         subtitle="Turn quantum risk into an owned, sequenced migration plan."
       >
-        <button className="primary">
+        <button className="primary" onClick={() => setPlanOpen(true)}>
           <Wrench />
           Create plan
         </button>
       </PageTitle>
       <section className="content-grid">
-        <Metric icon={Target} value="8" label="open actions" tone="red" />
-        <Metric icon={Activity} value="3" label="in progress" tone="blue" />
-        <Metric icon={Check} value="4" label="completed" tone="green" />
+        <Metric icon={Target} value={openCount} label="open actions" tone="red" />
+        <Metric icon={Activity} value={progressCount} label="in progress" tone="blue" />
+        <Metric icon={Check} value={completedCount} label="completed" tone="green" />
         <article className="card asset-list">
           <div className="card-heading">
             <span>
               <Wrench />
               Migration queue
             </span>
-            <button className="text-link">
-              Sort by urgency <ChevronDown />
-            </button>
+            <label className="queue-sort">Sort by
+              <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort migration queue">
+                <option value="urgency">Urgency</option>
+                <option value="due">Due date</option>
+                <option value="status">Status</option>
+                <option value="owner">Owner</option>
+              </select>
+            </label>
           </div>
-          {[
-            [
-              "Replace RSA key exchange",
-              "api-gateway-prod-01",
-              "Alex R.",
-              "May 28",
-              "In progress",
-            ],
-            [
-              "Pilot hybrid TLS",
-              "vpn-concentrator-01",
-              "Maya K.",
-              "May 30",
-              "Planned",
-            ],
-            [
-              "Rotate root hierarchy",
-              "ca-root-internal",
-              "Chris D.",
-              "Jun 2",
-              "Blocked",
-            ],
-          ].map((x, i) => (
-            <div className="asset-row" key={x[0]}>
+          {sortedActions.map((action, i) => (
+            <div className="asset-row" key={action.id}>
               <span className={`step-number s${i}`}>{i + 1}</span>
               <div>
-                <b>{x[0]}</b>
-                <small>{x[1]}</small>
+                <b>{action.title}</b>
+                <small>{action.asset}</small>
               </div>
-              <span>{x[2]}</span>
-              <span>{x[3]}</span>
-              <span className="status-pill">{x[4]}</span>
-              <button>
+              <span>{action.owner}</span>
+              <span>{new Date(`${action.due}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+              <span className={`status-pill ${action.status.toLowerCase().replace(" ", "-")}`}>{action.status}</span>
+              <button onClick={() => setSelectedAction(action)}>
                 Open <ChevronRight />
               </button>
             </div>
           ))}
         </article>
       </section>
+      {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New remediation plan</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={() => setPlanOpen(false)} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input value={planOwner} onChange={event => setPlanOwner(event.target.value)} placeholder="Name or team" /></label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={() => setPlanOpen(false)}>Cancel</button><button type="submit" className="primary"><Check />Add to migration queue</button></div></form></div>}
+      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Remediation action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close remediation details">×</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div></dl><p><b>Planning boundary:</b> This is an accountable migration action. Completion should only be recorded when supporting implementation and validation evidence exists.</p></aside>}
     </>
   );
 }

@@ -8,7 +8,7 @@ An evidence-backed post-quantum cryptography readiness dashboard and assessment 
 curl -fsSL https://raw.githubusercontent.com/exocognosis/QuantumSentinel/main/install.sh | sh
 ```
 
-That single command downloads Quantum Sentinel into `./QuantumSentinel`, installs its dependencies, builds it, starts the API and dashboard, and opens `http://127.0.0.1:5173`. Press `Ctrl+C` to stop it. Run the same command later to update and relaunch it safely.
+That single command downloads Quantum Sentinel into `./QuantumSentinel`, installs its dependencies, builds it, starts the API and dashboard, and opens the verified local dashboard URL. It starts at `http://127.0.0.1:5173` and automatically selects the next available port when another application is already using it. Press `Ctrl+C` to stop it. Run the same command later to update and relaunch it safely.
 
 Requirements: Git and Node.js 20.19 or newer. To choose a different installation location, set `QS_INSTALL_DIR` before the command.
 

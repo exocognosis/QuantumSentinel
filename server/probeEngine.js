@@ -8,6 +8,8 @@ const DEFAULT_TLS_TIMEOUT_MS = 5_000;
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 1_000;
 const MAX_DISCOVERY_TARGETS = 16;
 const MAX_DISCOVERY_TIMEOUT_MS = 5_000;
+const MAX_DISCOVERY_PORTS = 8;
+const MAX_DISCOVERY_CONCURRENCY = 8;
 
 const jobs = new Map();
 let nextJobId = 1;
@@ -55,6 +57,22 @@ function parsePort(port) {
   return parsed;
 }
 
+function parsePorts(ports, fallbackPort) {
+  if (ports === undefined) return [parsePort(fallbackPort)];
+  if (!Array.isArray(ports) || ports.length === 0 || ports.length > MAX_DISCOVERY_PORTS) {
+    throw new ProbeValidationError(`ports must contain between 1 and ${MAX_DISCOVERY_PORTS} entries`);
+  }
+  return Array.from(new Set(ports.map(parsePort)));
+}
+
+function parseConcurrency(value) {
+  const parsed = Number(value ?? 4);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_DISCOVERY_CONCURRENCY) {
+    throw new ProbeValidationError(`concurrency must be between 1 and ${MAX_DISCOVERY_CONCURRENCY}`);
+  }
+  return parsed;
+}
+
 function parseTimeoutMs(timeoutMs) {
   const parsed = Number(timeoutMs);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -75,8 +93,8 @@ function parseDiscoveryTimeoutMs(timeoutMs) {
 
 function normalizeMode(input) {
   const mode = input.mode ?? (input.host ? "tls" : "simulate");
-  if (mode !== "simulate" && mode !== "tls" && mode !== "discovery") {
-    throw new ProbeValidationError("mode must be simulate, tls, or discovery");
+  if (mode !== "simulate" && mode !== "tls" && mode !== "discovery" && mode !== "device") {
+    throw new ProbeValidationError("mode must be simulate, tls, discovery, or device");
   }
   return mode;
 }
@@ -132,12 +150,21 @@ function validateProbeInput(input) {
   }
 
   if (mode === "discovery") {
+    const ports = parsePorts(input.ports, input.port);
     return {
       mode,
       hosts: normalizeDiscoveryHosts(input.hosts),
-      port: parsePort(input.port),
+      ports,
+      port: ports[0],
+      concurrency: parseConcurrency(input.concurrency),
+      expandedScope: input.ports !== undefined || input.concurrency !== undefined,
       timeoutMs: parseDiscoveryTimeoutMs(input.timeoutMs),
     };
+  }
+
+  if (mode === "device") {
+    const scope = input.scope === "localhost" ? ["localhost"] : input.scope === "ipv4" ? ["127.0.0.1"] : ["127.0.0.1", "localhost"];
+    return { mode, hosts: scope, ports: parsePorts(input.ports, input.port), concurrency: 2, timeoutMs: parseDiscoveryTimeoutMs(input.timeoutMs) };
   }
 
   if (typeof input.host !== "string" || input.host.trim() === "") {
@@ -411,12 +438,17 @@ async function discoveryObservation({ host, port, timeoutMs }) {
   }
 }
 
-async function discoveryResult({ hosts, port, timeoutMs }) {
-  const observations = [];
-
-  for (const host of hosts) {
-    observations.push(await discoveryObservation({ host, port, timeoutMs }));
-  }
+async function discoveryResult({ hosts, ports, timeoutMs, concurrency = 4 }) {
+  const work = hosts.flatMap((host) => ports.map((port) => ({ host, port, timeoutMs })));
+  const observations = new Array(work.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < work.length) {
+      const index = cursor++;
+      observations[index] = await discoveryObservation(work[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, work.length) }, worker));
 
   const completedCount = observations.filter((observation) => observation.status === "completed").length;
   const failedCount = observations.length - completedCount;
@@ -426,6 +458,8 @@ async function discoveryResult({ hosts, port, timeoutMs }) {
     source: "discovery",
     summary: {
       targetsScanned: observations.length,
+      hostsScanned: hosts.length,
+      portsScanned: ports.length,
       completedCount,
       failedCount,
     },
@@ -434,7 +468,22 @@ async function discoveryResult({ hosts, port, timeoutMs }) {
   };
 }
 
-function makeJob({ mode, asset, assetId, host, hosts, port }) {
+async function deviceResult(request) {
+  const discovery = await discoveryResult(request);
+  return {
+    ...discovery,
+    source: "device",
+    runtime: {
+      platform: process.platform,
+      architecture: process.arch,
+      node: process.versions.node,
+      openssl: process.versions.openssl ?? "unknown",
+    },
+    scope: { hosts: request.hosts, ports: request.ports },
+  };
+}
+
+function makeJob({ mode, asset, assetId, host, hosts, port, ports, concurrency, expandedScope }) {
   const now = isoNow();
   const id = `probe-${nextJobId}`;
   nextJobId += 1;
@@ -456,8 +505,8 @@ function makeJob({ mode, asset, assetId, host, hosts, port }) {
         };
       }
 
-      if (mode === "discovery") {
-        return { hosts, port };
+      if (mode === "discovery" || mode === "device") {
+        return expandedScope || mode === "device" ? { hosts, ports, port: ports[0], concurrency } : { hosts, port };
       }
 
       return {
@@ -511,6 +560,8 @@ export async function createProbeJob(input) {
       ? simulatedResult(request.asset)
       : request.mode === "discovery"
         ? await discoveryResult(request)
+        : request.mode === "device"
+          ? await deviceResult(request)
         : await tlsResult(request);
     finishJob(job, result);
   } catch (error) {

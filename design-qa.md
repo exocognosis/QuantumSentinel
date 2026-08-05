@@ -50,6 +50,16 @@
 
 final result: passed
 
+## 2026-08-05 — Collector divergence pass
+
+- Public website options now expose a single TLS port and external timeout.
+- Device options now expose loopback scope, up to eight local service ports, and a short local timeout; the backend records platform, architecture, Node, and OpenSSL runtime evidence alongside loopback observations.
+- Authorized network options now expose up to eight service ports, per-host timeout, maximum targets, and bounded concurrency.
+- Backend network discovery now probes the host-port matrix with a maximum concurrency of eight and reports host, port, reachable, TLS, and failure observations separately.
+- Verified all three option sets in the browser and exercised both new backend collectors against the live local API.
+
+final result: passed
+
 ## 2026-08-05 — Scan-mode differentiation pass
 
 - Public website, local device, and authorized network now have distinct titles, evidence stages, scope statements, icons, observation lists, and interpretation copy.

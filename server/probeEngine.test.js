@@ -109,6 +109,37 @@ test("rejects invalid direct TLS probe asset and host inputs", async () => {
   assert.deepEqual(listProbeJobs(), []);
 });
 
+test("device probes collect runtime metadata across a bounded loopback port set", async () => {
+  resetProbeJobs();
+  const port = await unusedLocalPort();
+  const job = await createProbeJob({ mode: "device", scope: "ipv4", ports: [port], timeoutMs: 100 });
+
+  assert.equal(job.status, "completed");
+  assert.equal(job.mode, "device");
+  assert.deepEqual(job.target.hosts, ["127.0.0.1"]);
+  assert.deepEqual(job.target.ports, [port]);
+  assert.equal(job.result.source, "device");
+  assert.equal(job.result.runtime.openssl, process.versions.openssl);
+  assert.equal(job.result.summary.targetsScanned, 1);
+});
+
+test("network discovery probes multiple authorized ports with bounded concurrency", async () => {
+  resetProbeJobs();
+  const reachable = await listenTcp();
+  const unreachablePort = await unusedLocalPort();
+  try {
+    const job = await createProbeJob({ mode: "discovery", hosts: ["127.0.0.1"], ports: [reachable.port, unreachablePort], concurrency: 2, timeoutMs: 100 });
+    assert.equal(job.status, "completed");
+    assert.deepEqual(job.target.ports, [reachable.port, unreachablePort]);
+    assert.equal(job.target.concurrency, 2);
+    assert.equal(job.result.summary.targetsScanned, 2);
+    assert.equal(job.result.summary.completedCount, 1);
+    assert.equal(job.result.summary.failedCount, 1);
+  } finally {
+    await reachable.close();
+  }
+});
+
 test("serves probe collection, detail, and creation routes", async () => {
   resetProbeJobs();
   const api = await listen();

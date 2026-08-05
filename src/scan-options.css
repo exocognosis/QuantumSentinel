@@ -105,6 +105,12 @@
   font-size: 11px;
 }
 
+.horizon > strong.long-horizon {
+  white-space: nowrap;
+  font-size: 36px;
+  letter-spacing: -1px;
+}
+
 .horizon label small {
   display: block;
   margin-top: 7px;

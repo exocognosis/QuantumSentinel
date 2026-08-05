@@ -585,7 +585,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
               </span>
             </button>
           </div>
-          <strong>{horizonDisplay.primary}</strong>
+          <strong className={daysUntil(horizon.date) >= 365 ? "long-horizon" : ""}>{horizonDisplay.primary}</strong>
           <h2>{horizonDisplay.secondary}</h2>
           <p className="horizon-date">
             Scenario threshold ·{" "}

@@ -1758,41 +1758,11 @@ function Exposure({ data }) {
   const assets = data?.assets || [];
   const [assetFilter, setAssetFilter] = useState("all");
   const [selectedAsset, setSelectedAsset] = useState(null);
-  const critical =
-    assets.filter((asset) => asset.prio === "CRITICAL").length ||
-    data?.summary?.criticalCount ||
-    8;
-  const sourceAssets = assets.length
-    ? assets
-    : [
-        {
-          name: "api-gateway-prod-01",
-          algo: "RSA-2048",
-          prio: "CRITICAL",
-          segment: "PERIMETER",
-          type: "Load Balancer",
-          proto: "TLS 1.3",
-          tnfl: 72,
-        },
-        {
-          name: "vpn-concentrator-01",
-          algo: "ECDH P-256",
-          prio: "CRITICAL",
-          segment: "DMZ",
-          type: "VPN Gateway",
-          proto: "IKEv2",
-          tnfl: 61,
-        },
-        {
-          name: "ca-root-internal",
-          algo: "RSA-4096",
-          prio: "HIGH",
-          segment: "INTERNAL",
-          type: "CA Server",
-          proto: "PKIX",
-          tnfl: 99,
-        },
-      ];
+  const critical = assets.filter((asset) => asset.prio === "CRITICAL").length;
+  const sourceAssets = assets;
+  const hndlCandidates = assets.filter(
+    (asset) => asset.cls === "SHOR-CRITICAL" || Number(asset.hndl) >= 70,
+  ).length;
   const isPublic = (asset) =>
     ["PERIMETER", "DMZ", "CLOUD", "PUBLIC", "INTERNET"].includes(
       String(asset.segment || "").toUpperCase(),
@@ -1855,12 +1825,12 @@ function Exposure({ data }) {
         />
         <Metric
           icon={Clock3}
-          value={data?.summary?.shorCount || 12}
+          value={hndlCandidates}
           label="HNDL candidates"
           tone="red"
         />
         <Metric icon={FileText} value={tnflAssets.length} label="TNFL candidates" tone="red" trend="Signature and trust exposure" />
-        <article className="card tnfl-card"><div className="card-heading"><span><FileText />Signature & trust exposure (TNFL)</span><small>Derived from observed asset role, protocol, algorithm, trust relevance, and existing TNFL risk evidence.</small></div><p>Trust-now-forge-later analysis identifies systems whose signatures or trust assertions may need to remain valid after classical public-key cryptography becomes vulnerable.</p><div className="tnfl-list">{tnflAssets.slice(0, 5).map(asset => <button key={asset.id || asset.hostname || asset.name} onClick={() => setSelectedAsset(asset)}><span className="tnfl-score">{Math.round(Number(asset.tnfl))}</span><span><b>{asset.hostname || asset.name || asset.id}</b><small>{tnflReason(asset)}</small></span><span>{asset.migration || "Define signature migration target"}</span><ChevronRight /></button>)}</div><div className="tnfl-note"><CircleHelp /><span><b>What this function measures:</b> a prioritized signature/trust exposure signal from collected evidence. It is not proof that an artifact can be forged, and missing signing evidence remains an assessment gap.</span></div></article>
+        <article className="card tnfl-card"><div className="card-heading"><span><FileText />Signature & trust exposure (TNFL)</span><small>Derived from observed asset role, protocol, algorithm, trust relevance, and existing TNFL risk evidence.</small></div><p>Trust-now-forge-later analysis identifies systems whose signatures or trust assertions may need to remain valid after classical public-key cryptography becomes vulnerable.</p><div className="tnfl-list">{tnflAssets.length ? tnflAssets.slice(0, 5).map(asset => <button key={asset.id || asset.hostname || asset.name} onClick={() => setSelectedAsset(asset)}><span className="tnfl-score">{Math.round(Number(asset.tnfl))}</span><span><b>{asset.hostname || asset.name || asset.id}</b><small>{tnflReason(asset)}</small></span><span>{asset.migration || "Define signature migration target"}</span><ChevronRight /></button>) : <p className="empty-scans">No signature or trust exposure evidence yet. Run an authorized scan to establish a baseline.</p>}</div><div className="tnfl-note"><CircleHelp /><span><b>What this function measures:</b> a prioritized signature/trust exposure signal from collected evidence. It is not proof that an artifact can be forged, and missing signing evidence remains an assessment gap.</span></div></article>
         <article className="card asset-list">
           <div className="card-heading">
             <span>
@@ -1903,7 +1873,11 @@ function Exposure({ data }) {
               </div>
             ))
           ) : (
-            <p className="empty-scans">No assets match this exposure filter.</p>
+            <p className="empty-scans">
+              {sourceAssets.length
+                ? "No assets match this exposure filter."
+                : "No exposure evidence yet. Run an authorized scan to collect evidence."}
+            </p>
           )}
         </article>
       </section>

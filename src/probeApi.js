@@ -115,7 +115,14 @@ async function fetchJson(fetcher, path, options = {}) {
   const response = await fetcher(withBaseUrl(path, options.baseUrl), request);
 
   if (!response.ok) {
-    throw new Error(`Request failed for ${path}: ${response.status}`);
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail = String(payload?.error || payload?.message || "").trim();
+    } catch {
+      // Preserve the status-only fallback when the server does not return JSON.
+    }
+    throw new Error(detail || `Request failed for ${path}: ${response.status}`);
   }
 
   return response.json();

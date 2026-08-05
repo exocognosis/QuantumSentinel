@@ -122,6 +122,16 @@ test("createProbeJob posts a JSON request and normalizes the created job", async
   });
 });
 
+test("createProbeJob surfaces API validation details", async () => {
+  await assert.rejects(
+    () => createProbeJob(
+      { mode: "simulate", assetId: "missing" },
+      { fetcher: async () => jsonResponse({ error: "Asset not found" }, { ok: false, status: 400 }) },
+    ),
+    /Asset not found/,
+  );
+});
+
 test("normalizeProbeJob labels discovery requests and summarizes host targets", () => {
   const job = normalizeProbeJob({
     id: "discovery-1",

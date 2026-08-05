@@ -8,6 +8,7 @@ import {
 import { loadApplianceData } from "./api.js";
 import { createProbeJob, loadProbeJobs } from "./probeApi.js";
 import "./dashboard.css";
+import "./scan-options.css";
 
 const NAV = [
   ["Overview", BarChart3], ["Q-Day Readiness", ShieldCheck], ["Scan", Target],
@@ -94,17 +95,27 @@ function Scan({ scans, setScans }) {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [completed, setCompleted] = useState(false);
+  const [resultNote, setResultNote] = useState("");
   const [error, setError] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [port, setPort] = useState(443);
+  const [timeoutMs, setTimeoutMs] = useState(2500);
+  const [targetLimit, setTargetLimit] = useState(12);
   useEffect(() => { if (!running) return; const timer = setInterval(() => setProgress(p => Math.min(p + 7, 92)), 450); return () => clearInterval(timer); }, [running]);
   async function startScan() {
-    setError(""); setCompleted(false); setRunning(true); setProgress(12);
+    setError(""); setResultNote(""); setCompleted(false); setRunning(true); setProgress(12);
     try {
       let request;
-      if (mode === "public") request = { mode: "tls", host: target.replace(/^https?:\/\//, "").split("/")[0], port: 443, timeoutMs: 5000 };
-      else if (mode === "device") request = { mode: "simulate", assetId: "local-machine" };
-      else request = { mode: "discovery", hosts: target.split(/[\s,;]+/).filter(Boolean).slice(0, 12), timeoutMs: 2500 };
+      const boundedPort = Math.max(1, Math.min(65535, Number(port) || 443));
+      const boundedTimeout = Math.max(250, Math.min(mode === "public" ? 10000 : 5000, Number(timeoutMs) || 2500));
+      if (mode === "public") request = { mode: "tls", host: target.replace(/^https?:\/\//, "").split("/")[0], port: boundedPort, timeoutMs: boundedTimeout };
+      else if (mode === "device") request = { mode: "discovery", hosts: ["127.0.0.1", "localhost"], port: boundedPort, timeoutMs: boundedTimeout };
+      else request = { mode: "discovery", hosts: target.split(/[\s,;]+/).filter(Boolean).slice(0, Math.max(1, Math.min(16, Number(targetLimit) || 12))), port: boundedPort, timeoutMs: boundedTimeout };
       const job = await createProbeJob(request);
-      setScans(prev => [{ ...job, targetLabel: job.targetLabel || target, riskScore: job.riskScore || 79, completedAt: job.completedAt || new Date().toISOString(), status: job.status === "QUEUED" ? "RUNNING" : job.status }, ...prev.filter(s => s.id !== job.id)]);
+      const noReachableService = job.type === "discovery" && job.result?.summary?.completedCount === 0;
+      const observedScore = noReachableService ? null : job.riskScore;
+      setResultNote(noReachableService ? `No TLS service detected on port ${boundedPort}.` : "Scan completed and evidence saved.");
+      setScans(prev => [{ ...job, targetLabel: job.targetLabel || target, riskScore: observedScore, completedAt: job.completedAt || new Date().toISOString(), status: job.status === "QUEUED" ? "RUNNING" : job.status }, ...prev.filter(s => s.id !== job.id)]);
       setTimeout(() => { setProgress(100); setCompleted(true); setRunning(false); }, 650);
     } catch (e) { setError(e.message || "Scan could not start"); setRunning(false); }
   }
@@ -112,8 +123,8 @@ function Scan({ scans, setScans }) {
   return <>
     <PageTitle title="Scan your quantum exposure" subtitle="Check a public domain, this machine, or an authorized network." />
     <section className="scan-grid">
-      <article className="card scan-composer"><div className="mode-tabs">{modes.map(([id,Icon,label])=><button className={mode===id?"active":""} onClick={()=>{setMode(id);setTarget(id==="public"?"example.com":id==="device"?"Local machine":"10.0.0.1, 10.0.0.2")}} key={id}><Icon/>{label}</button>)}</div><div className="target-input"><Search/><input value={target} onChange={e=>setTarget(e.target.value)} disabled={mode==="device"} aria-label="Scan target"/></div><div className="scan-actions"><button className="secondary"><Settings2/>Advanced options<ChevronDown/></button><button className="primary" disabled={running || !target.trim()} onClick={startScan}><Play/>{running?"Scanning…":"Start scan"}</button></div><p className="consent"><Shield/>Only scan systems you own or are authorized to test.</p>{error&&<p className="error">{error}</p>}</article>
-      <article className="card active-scan"><div className="scan-target"><span className="metric-icon blue"><Globe2/></span><b>{target || "example.com"}</b><span className="status-pill">{running?"Active scan":completed?"Completed":"Ready"}</span></div><div className="progress-layout"><div className="progress-ring" style={{"--progress":`${progress*3.6}deg`}}><div><strong>{progress}%</strong><span>{running?"Complete":completed?"Complete":"Ready"}</span></div></div><div className="steps">{["TLS handshake","Certificate chain","Algorithm analysis","Report pending"].map((s,i)=><div className={(progress > (i+1)*22)?"done":progress > i*22?"current":""} key={s}><i>{progress > (i+1)*22?<Check/>:null}</i><span>{s}</span><small>{progress > (i+1)*22?"Done":progress > i*22?"Active":"Pending"}</small></div>)}</div></div><div className="scan-footer"><span><Clock3/>{running?"About 24 seconds left":completed?"Scan completed":"Choose a target to begin"}</span>{running&&<button className="secondary" onClick={()=>setRunning(false)}>Cancel scan</button>}</div></article>
+      <article className="card scan-composer"><div className="mode-tabs">{modes.map(([id,Icon,label])=><button className={mode===id?"active":""} onClick={()=>{setMode(id);setTarget(id==="public"?"example.com":id==="device"?"Local machine":"10.0.0.1, 10.0.0.2")}} key={id}><Icon/>{label}</button>)}</div><div className="target-input"><Search/><input value={target} onChange={e=>setTarget(e.target.value)} disabled={mode==="device"} aria-label="Scan target"/></div><div className="scan-actions"><button className={`secondary ${advancedOpen?"open":""}`} aria-expanded={advancedOpen} onClick={()=>setAdvancedOpen(open=>!open)}><Settings2/>Advanced options<ChevronDown/></button><button className="primary" disabled={running || !target.trim()} onClick={startScan}><Play/>{running?"Scanning…":"Start scan"}</button></div>{advancedOpen&&<div className="advanced-panel"><label><span>Service port</span><input aria-label="Service port" type="number" min="1" max="65535" value={port} onChange={e=>setPort(e.target.value)}/><small>443 is standard HTTPS/TLS.</small></label><label><span>Connection timeout</span><select aria-label="Connection timeout" value={timeoutMs} onChange={e=>setTimeoutMs(e.target.value)}><option value="1000">1 second</option><option value="2500">2.5 seconds</option><option value="5000">5 seconds</option>{mode==="public"&&<option value="10000">10 seconds</option>}</select><small>Longer helps slow or distant targets.</small></label>{mode==="network"&&<label><span>Maximum targets</span><input aria-label="Maximum targets" type="number" min="1" max="16" value={targetLimit} onChange={e=>setTargetLimit(e.target.value)}/><small>Safety limit: 16 hosts per scan.</small></label>}<div className="advanced-note"><ShieldCheck/><span><b>Evidence is saved automatically.</b><small>Results feed Exposure, Reports, and your readiness score.</small></span></div></div>}<p className="consent"><Shield/>Only scan systems you own or are authorized to test.</p>{error&&<p className="error">{error}</p>}</article>
+      <article className="card active-scan"><div className="scan-target"><span className="metric-icon blue"><Globe2/></span><b>{target || "example.com"}</b><span className="status-pill">{running?"Active scan":completed?"Completed":"Ready"}</span></div><div className="progress-layout"><div className="progress-ring" style={{"--progress":`${progress*3.6}deg`}}><div><strong>{progress}%</strong><span>{running?"Complete":completed?"Complete":"Ready"}</span></div></div><div className="steps">{["TLS handshake","Certificate chain","Algorithm analysis","Report pending"].map((s,i)=><div className={(progress > (i+1)*22)?"done":progress > i*22?"current":""} key={s}><i>{progress > (i+1)*22?<Check/>:null}</i><span>{s}</span><small>{progress > (i+1)*22?"Done":progress > i*22?"Active":"Pending"}</small></div>)}</div></div><div className="scan-footer"><span><Clock3/>{running?"About 24 seconds left":completed?(resultNote||"Scan completed"):"Choose a target to begin"}</span>{running&&<button className="secondary" onClick={()=>setRunning(false)}>Cancel scan</button>}</div></article>
       <RecentScans scans={scans} onRescan={(scan)=>{setTarget(scan.targetLabel);setMode(scan.type==="local"?"device":"public");}} />
       <article className="card check-card"><div className="card-heading"><span><ShieldCheck/>What we check</span></div>{[[KeyRound,"Key exchange","Evaluates TLS key exchange algorithms and strength."],[FileText,"Certificates","Checks validity, trust chain and configuration."],[Sparkles,"Signatures","Assesses digital signature algorithms and key sizes."],[Clock3,"Harvest-now-decrypt-later exposure","Identifies data at risk if encrypted today."]].map(([Icon,t,d])=><div className="check-row" key={t}><span><Icon/></span><div><b>{t}</b><small>{d}</small></div></div>)}<button className="text-link">Learn about scoring <ChevronRight/></button></article>
       <article className="card monitor-card"><div className="card-heading"><span><Activity/>Scheduled monitoring</span><label className="switch"><input type="checkbox" defaultChecked/><i/></label></div><p>We continuously monitor your approved assets.</p>{["example.com","api.quantumlink.dev"].map(x=><div className="monitor-row" key={x}><Globe2/><b>{x}</b><span>Next run<br/><strong>7:55 AM</strong></span><small><i/>Active</small></div>)}<button className="secondary"><Settings2/>Manage</button></article>
@@ -124,7 +135,7 @@ function Scan({ scans, setScans }) {
 
 function RecentScans({ scans, onRescan }) {
   const rows = [...scans, ...FALLBACK_SCANS].filter((s,i,a)=>a.findIndex(x=>x.targetLabel===s.targetLabel)===i).slice(0,3);
-  return <article className="card recent-card"><div className="card-heading"><span><Clock3/>Recent scans</span><button className="text-link">View all</button></div>{rows.map(scan=><div className="recent-row" key={scan.id}><span className="metric-icon blue">{scan.type==="local"?<Laptop/>:<Globe2/>}</span><div><b>{scan.targetLabel}</b><small>{timeAgo(scan.completedAt)}</small></div><span className={`score score-${scoreGrade(scan.riskScore||79).toLowerCase()}`}>{scan.riskScore||79} <small>{scoreGrade(scan.riskScore||79)}</small></span><button onClick={()=>onRescan(scan)} aria-label={`Rescan ${scan.targetLabel}`}><RefreshCw/><small>Rescan</small></button></div>)}</article>;
+  return <article className="card recent-card"><div className="card-heading"><span><Clock3/>Recent scans</span><button className="text-link">View all</button></div>{rows.map(scan=>{const hasScore=Number.isFinite(scan.riskScore)&&scan.riskScore>0;return <div className="recent-row" key={scan.id}><span className="metric-icon blue">{scan.type==="local"?<Laptop/>:<Globe2/>}</span><div><b>{scan.targetLabel}</b><small>{timeAgo(scan.completedAt)}</small></div><span className={`score ${hasScore?`score-${scoreGrade(scan.riskScore).toLowerCase()}`:"score-none"}`}>{hasScore?scan.riskScore:"—"} <small>{hasScore?scoreGrade(scan.riskScore):"No score"}</small></span><button onClick={()=>onRescan(scan)} aria-label={`Rescan ${scan.targetLabel}`}><RefreshCw/><small>Rescan</small></button></div>})}</article>;
 }
 
 function Readiness() {

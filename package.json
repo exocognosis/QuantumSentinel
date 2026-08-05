@@ -19,7 +19,8 @@
     "test": "node --test server/*.test.js src/*.test.js",
     "test:api": "node --test server/api.test.js",
     "test:probes": "node --test server/probeEngine.test.js src/probeApi.test.js",
-    "scan": "node scripts/quantumsentinel.mjs scan"
+    "scan": "node scripts/quantumsentinel.mjs scan",
+    "scan-domain": "node scripts/quantumsentinel.mjs scan-domain"
   },
   "dependencies": {
     "lucide-react": "^1.17.0",

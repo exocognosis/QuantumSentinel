@@ -17,6 +17,18 @@ Every observation includes its file, line, evidence confidence, likely usage con
 
 The optional `--datastore` mode ingests repository evidence into the existing asset inventory, remediation queue, CBOM snapshots, audit chain, and report APIs. Files are read only by the local CLI; the HTTP API does not expose an arbitrary filesystem-scanning endpoint.
 
+## Authorized External Domain Scanning
+
+Scan the publicly observable cryptographic posture of an explicitly authorized domain:
+
+```sh
+npm run scan-domain -- example.com --ports 443,8443 --output example-qday.json --html example-qday.html
+```
+
+Domain scans are limited to an allowlist of implicit-TLS service ports (`443`, `465`, `636`, `853`, `993`, `995`, `8443`, and `9443`), use strict connection timeouts, and do not crawl, exploit, or test general web vulnerabilities. Results describe the observed edge; CDNs, proxies, origin services, internal systems, runtime fallback, and third-party trust paths remain separate evidence boundaries.
+
+Public-sector or critical-infrastructure comparisons should be based on authorized, rate-limited observations and described as **external Q-Day posture**, not proof of an organization's internal security. A classical public edge warrants an internal inventory; it does not establish what that inventory will find.
+
 ## Product State
 
 QuantumSentinel currently runs as a local React dashboard backed by a Node API and persistent local datastore. It is suitable for MVP demos, local assessment workflows, and API/client development. It is not yet a production appliance.

@@ -3,20 +3,24 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { createDatastore } from "../server/datastore.js";
+import { scanDomain } from "../server/domainScanner.js";
 import { scanRepository } from "../server/repositoryScanner.js";
 import { persistRepositoryScan } from "../server/repositoryScanPersistence.js";
+import { persistProbeResult } from "../server/app.js";
 
 function usage() {
   return `QuantumSentinel Q-Day Scanner
 
 Usage:
   quantumsentinel scan [directory] [--json] [--output path] [--html path] [--datastore path]
+  quantumsentinel scan-domain <domain> [--ports 443,993] [--json] [--output path] [--html path] [--datastore path]
 
 Options:
   --json          Print the complete JSON report to stdout
   --output, -o    Write the complete JSON report to a file
   --html          Write a self-contained HTML report
   --datastore     Persist scan evidence into a QuantumSentinel datastore
+  --ports         Bounded TLS service ports for scan-domain
   --help, -h      Show this help
 `;
 }
@@ -24,11 +28,12 @@ function parseArguments(argv) {
   const args = [...argv];
   const command = args.shift();
   if (!command || command === "--help" || command === "-h") return { help: true };
-  if (command !== "scan") throw new Error(`unknown command: ${command}`);
+  if (command !== "scan" && command !== "scan-domain") throw new Error(`unknown command: ${command}`);
   let target = ".";
   let output = null;
   let html = null;
   let datastore = null;
+  let ports = null;
   let json = false;
   while (args.length) {
     const value = args.shift();
@@ -36,13 +41,15 @@ function parseArguments(argv) {
     else if (value === "--output" || value === "-o") output = args.shift();
     else if (value === "--html") html = args.shift();
     else if (value === "--datastore") datastore = args.shift();
+    else if (value === "--ports") ports = args.shift();
     else if (value.startsWith("-")) throw new Error(`unknown option: ${value}`);
     else target = value;
   }
   if (output === undefined) throw new Error("--output requires a path");
   if (html === undefined) throw new Error("--html requires a path");
   if (datastore === undefined) throw new Error("--datastore requires a path");
-  return { target, output, html, datastore, json };
+  if (command === "scan-domain" && target === ".") throw new Error("scan-domain requires a domain");
+  return { command, target, output, html, datastore, ports, json };
 }
 function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -57,7 +64,7 @@ function humanSummary(report) {
   const pqc = report.summary.byClassification.pqc ?? 0;
   const lines = [
     `QuantumSentinel Q-Day scan: ${report.scan.targetName}`,
-    `Files scanned: ${report.scan.filesScanned.toLocaleString()}`,
+    `${report.scan.kind === "domain" ? "Services tested" : "Files scanned"}: ${report.scan.filesScanned.toLocaleString()}`,
     `Readiness score: ${report.score.readinessScore}/100 (${report.score.grade})`,
     `Shor-vulnerable references: ${vulnerable}`,
     `Deprecated references: ${deprecated}`,
@@ -73,12 +80,26 @@ function humanSummary(report) {
 try {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) { process.stdout.write(usage()); process.exit(0); }
-  const report = await scanRepository(resolve(options.target));
+  const report = options.command === "scan-domain"
+    ? await scanDomain(options.target, {
+      ports: options.ports == null ? undefined : options.ports.split(",").map((port) => Number(port.trim())),
+    })
+    : await scanRepository(resolve(options.target));
   let persistence = null;
   if (options.datastore) {
     const datastore = await createDatastore({ filePath: resolve(options.datastore) });
     try {
-      persistence = await persistRepositoryScan(datastore, report, { actor: "quantumsentinel-cli" });
+      if (options.command === "scan-domain") {
+        for (const job of report.services) await persistProbeResult(datastore, job);
+        persistence = { persistence: { createdAssets: 0, updatedAssets: 0, createdFindings: report.findings.filter((finding) => finding.severity !== "INFO").length, refreshedFindings: 0 } };
+        await datastore.createAuditEvent({
+          actor: "quantumsentinel-cli", action: "domain_scan.completed", entityType: "domain-scan",
+          entityId: report.scan.target, summary: `${report.scan.target} scored ${report.score.readinessScore}/100`,
+          metadata: { score: report.score, summary: report.summary, ports: report.scan.ports },
+        });
+      } else {
+        persistence = await persistRepositoryScan(datastore, report, { actor: "quantumsentinel-cli" });
+      }
     } finally {
       await datastore.close();
     }

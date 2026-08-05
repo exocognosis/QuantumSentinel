@@ -83,8 +83,8 @@ async function collectFiles(root, { maxFiles, maxFileBytes }) {
   await visit(root);
   return { files, skipped, limitReached: files.length >= maxFiles };
 }
-function scoreFindings(findings) {
-  const penaltyBySeverity = { CRITICAL: 15, HIGH: 8, MEDIUM: 4, LOW: 2, INFO: 0 };
+export function calculateReadinessScore(findings) {
+  const penaltyBySeverity = { CRITICAL: 30, HIGH: 20, MEDIUM: 8, LOW: 3, INFO: 0 };
   const confidenceMultiplier = { confirmed: 1, high: 0.9, candidate: 0.55, "dependency-reference": 0.4, "documentation-reference": 0.1 };
   const grouped = new Map();
   for (const finding of findings.filter((item) => item.severity !== "INFO")) {
@@ -143,7 +143,7 @@ export async function scanRepository(inputPath, options = {}) {
   return {
     schemaVersion: "1.0.0", scanner: { name: "QuantumSentinel Q-Day Scanner", version: "0.1.0" },
     scan: { target: root, targetName: basename(root), startedAt, completedAt, filesScanned: inventory.files.length, bytesScanned, limitReached: inventory.limitReached, skipped: inventory.skipped, exclusions: [...EXCLUDED_DIRECTORIES].sort() },
-    score: scoreFindings(findings), summary: summarize(findings), findings,
+    score: calculateReadinessScore(findings), summary: summarize(findings), findings,
     limitations: [
       "Static textual detection does not prove that every referenced algorithm is reachable or operationally deployed.",
       "Documentation and dependency references are assigned lower confidence than explicit configuration or key material.",

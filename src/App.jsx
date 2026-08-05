@@ -545,10 +545,10 @@ function Panel({ title, children, badge, style={} }) {
 
 function QDayScoreMethodology() {
   const severityWeights = [
-    ["Critical", "15", C.red],
-    ["High", "8", C.amber],
-    ["Medium", "4", C.tnfl],
-    ["Low", "2", C.accent],
+    ["Critical", "30", C.red],
+    ["High", "20", C.amber],
+    ["Medium", "8", C.tnfl],
+    ["Low", "3", C.accent],
     ["Informational", "0", C.green],
   ];
   const confidenceWeights = [

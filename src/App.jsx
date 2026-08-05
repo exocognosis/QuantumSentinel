@@ -116,6 +116,16 @@ function daysUntil(date) {
   );
 }
 
+function formatHorizon(days) {
+  if (days < 365) return { primary: days.toLocaleString(), secondary: days === 1 ? "day" : "days" };
+  const years = Math.floor(days / 365);
+  const remainingDays = days % 365;
+  return {
+    primary: `${years} ${years === 1 ? "year" : "years"}`,
+    secondary: `${remainingDays.toLocaleString()} ${remainingDays === 1 ? "day" : "days"}`,
+  };
+}
+
 function timeAgo(value) {
   if (!value) return "recently";
   const mins = Math.max(
@@ -463,6 +473,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
   const safe = summary.safeCount || 2;
   const readiness = scores.readiness;
   const horizon = QDAY_SCENARIOS[scenario];
+  const horizonDisplay = formatHorizon(daysUntil(horizon.date));
   return (
     <>
       <PageTitle
@@ -535,8 +546,8 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
               </span>
             </button>
           </div>
-          <strong>{daysUntil(horizon.date)}</strong>
-          <h2>days</h2>
+          <strong>{horizonDisplay.primary}</strong>
+          <h2>{horizonDisplay.secondary}</h2>
           <p className="horizon-date">
             Scenario threshold ·{" "}
             {new Date(`${horizon.date}T00:00:00`).toLocaleDateString(

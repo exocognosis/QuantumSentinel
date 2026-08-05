@@ -35,6 +35,7 @@ import "./scan-options.css";
 
 const NAV = [
   ["Overview", BarChart3],
+  ["Intro / Context", CircleHelp],
   ["Q-Day Readiness", ShieldCheck],
   ["Scan", Target],
   ["Exposure", ShieldAlert],
@@ -463,6 +464,44 @@ function ReadinessDrivers({ scores, setActive }) {
       </div>
     </article>
   );
+}
+
+const QUANTUM_CONTEXT = [
+  {
+    term: "Q-Day",
+    summary: "The capability threshold at which a quantum computer could break widely used public-key cryptography.",
+    detail: "It is not a scheduled date like Y2K. Forecasts move as hardware, error correction, algorithms, and resources change. Use scenarios for awareness, but set an earlier organizational readiness deadline you control.",
+  },
+  {
+    term: "CRQC",
+    summary: "A cryptographically relevant quantum computer capable of attacking deployed cryptographic systems.",
+    detail: "A CRQC would need enough reliable, error-corrected quantum capability to run attacks such as Shor’s algorithm at a useful scale. Today's quantum computers do not meet that threshold.",
+  },
+  {
+    term: "Quantum exposure",
+    summary: "Reliance on cryptography that may become vulnerable to a sufficiently capable quantum computer.",
+    detail: "Exposure is not the same as a confirmed breach. It describes where vulnerable algorithms, long-lived data, critical systems, incomplete inventory, or weak migration planning create future risk.",
+  },
+  {
+    term: "HNDL",
+    summary: "Harvest now, decrypt later: stealing encrypted data today in hopes of decrypting it in the future.",
+    detail: "HNDL matters now when sensitive information must remain confidential for years. Migration after Q-Day cannot protect ciphertext that an adversary has already collected.",
+  },
+  {
+    term: "PQC",
+    summary: "Post-quantum cryptography designed to resist attacks by classical and quantum computers.",
+    detail: "PQC migration means more than swapping one algorithm. Organizations must inventory cryptography, test interoperability and performance, update trust chains, deploy safely, and retain evidence.",
+  },
+  {
+    term: "Crypto-agility",
+    summary: "The ability to discover, replace, and govern cryptography without disruptive system redesign.",
+    detail: "A crypto-agile organization knows where cryptography is used, who owns it, which dependencies constrain it, and how to migrate or roll back algorithms as standards and threats evolve.",
+  },
+];
+
+function QuantumContext() {
+  const [openTerm, setOpenTerm] = useState("Q-Day");
+  return <><PageTitle title="Quantum introduction & context" subtitle="The concepts behind Q-Day readiness, explained without the hype."/><section className="content-grid"><article className="card quantum-context"><div className="context-intro"><span className="metric-icon blue"><Sparkles /></span><div><span className="eyebrow">Quantum fundamentals</span><h2>What QuantumSentinel is measuring</h2><p>QuantumSentinel measures evidence of organizational readiness and cryptographic exposure. It does not predict an exact Q-Day or claim that an observed endpoint represents an entire organization.</p></div></div><div className="context-terms">{QUANTUM_CONTEXT.map(item => <div className={`context-term ${openTerm===item.term?"open":""}`} key={item.term}><button onClick={() => setOpenTerm(current => current===item.term?"":item.term)} aria-expanded={openTerm===item.term}><span><b>{item.term}</b><small>{item.summary}</small></span><ChevronDown /></button>{openTerm===item.term&&<p>{item.detail}</p>}</div>)}</div><div className="context-boundary"><ShieldCheck /><p><b>The practical goal:</b> establish what must remain protected, locate the cryptography supporting it, prioritize migration, and produce evidence that the transition is complete.</p></div></article></section></>;
 }
 
 function Overview({ data, scores, scans, setActive, openProfile }) {
@@ -1915,6 +1954,7 @@ export default function App() {
           openProfile={() => setProfileOpen(true)}
         />
       );
+    if (active === "Intro / Context") return <QuantumContext />;
     if (active === "Q-Day Readiness") return <Readiness scores={scores} />;
     if (active === "Scan")
       return <Scan scans={scans} setScans={setScans} setActive={setActive} />;

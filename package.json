@@ -1,0 +1,40 @@
+{
+  "name": "quantumsentinel",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "api": "node server/index.js",
+    "dev": "vite",
+    "web": "node server/web.js",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "smoke": "npm run smoke:core",
+    "smoke:core": "node scripts/smoke-core.mjs",
+    "smoke:runtime": "node scripts/smoke-runtime.mjs",
+    "test": "node --test server/*.test.js src/*.test.js",
+    "test:api": "node --test server/api.test.js",
+    "test:probes": "node --test server/probeEngine.test.js src/probeApi.test.js"
+  },
+  "dependencies": {
+    "lucide-react": "^1.17.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.49.0",
+    "vite": "^7.2.7"
+  }
+}

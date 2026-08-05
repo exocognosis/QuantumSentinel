@@ -93,17 +93,16 @@ function OrganizationProfile({ initialProfile, onSave, onClose }) {
   return <aside className="onboarding-panel" aria-labelledby="profile-title"><div className="onboarding-heading"><div><span className="eyebrow">Organization onboarding</span><h1 id="profile-title">Build your readiness baseline</h1><p>Your profile tailors regulatory context, evidence priorities, and the Quantum Readiness Score.</p></div><button className="icon-button" onClick={onClose} aria-label="Close profile">×</button></div><div className="profile-grid"><div className="profile-form"><label>Organization name<input value={profile.name} onChange={event=>update("name",event.target.value)} placeholder="Acme Corporation"/></label><div className="field-pair"><label>Industry<select value={profile.industry} onChange={event=>update("industry",event.target.value)}><option value="">Select industry</option>{["Finance","Healthcare","Energy","Defense","Technology","Government"].map(item=><option key={item}>{item}</option>)}</select></label><label>Primary geography<select value={profile.geography} onChange={event=>update("geography",event.target.value)}><option value="">Select geography</option>{Object.keys(REGULATORY_REGIMES).map(item=><option key={item}>{item}</option>)}</select></label></div><label>Organization size<select value={profile.size} onChange={event=>update("size",event.target.value)}><option value="">Select size</option><option>1–249 employees</option><option>250–999 employees</option><option>1,000–9,999 employees</option><option>10,000+ employees</option></select></label><fieldset><legend>Data and digital assets</legend><div className="profile-checks">{assets.map(asset=><label key={asset}><input type="checkbox" checked={profile.dataAssets.includes(asset)} onChange={()=>toggleAsset(asset)}/><span>{asset}</span></label>)}</div></fieldset></div><aside className="regime-card"><span className="metric-icon blue"><ShieldCheck/></span><h2>Regulatory context</h2><p>Suggested from your primary geography and industry.</p>{regimes.length?<div className="regime-list">{regimes.map(regime=><span key={regime}><Check/>{regime}</span>)}</div>:<div className="regime-empty">Select a geography and industry to see likely regimes.</div>}<small>Guidance only. Applicability depends on operations, customers, contracts, and legal interpretation.</small></aside></div><div className="onboarding-actions"><button className="secondary" onClick={onClose}>Finish later</button><button className="primary" disabled={!profile.name||!profile.industry||!profile.geography} onClick={()=>onSave({...profile,regimes})}><Check/>Save organization profile</button></div></aside>;
 }
 
-function ModernizationTrend({ rows = [] }) {
-  const series = rows.length ? rows.slice(-6) : [{day:"—",safe:0}];
-  const points = series.map((row,index) => ({
-    x: 20 + (series.length === 1 ? 0 : index * (570 / (series.length - 1))),
-    y: 160 - Math.min(100, Number(row.safe || 0)) * 3.2,
-    value: Number(row.safe || 0),
-    label: row.day,
-  }));
-  const line = points.map(point => `${point.x},${point.y}`).join(" ");
-  const area = `M${line.replaceAll(" "," L")} L${points.at(-1).x},170 L${points[0].x},170 Z`;
-  return <article className="card trend-card"><div className="card-heading"><span><Activity />Crypto modernization trend</span><span className="confidence-pill">Observed evidence</span></div><p>Share of inventoried assets using hybrid or quantum-safe cryptography</p><div className="chart" aria-label={`Modernization increased from ${points[0].value}% to ${points.at(-1).value}%`}><div className="chart-grid"/><svg viewBox="0 0 620 180" role="img"><path className="area" d={area}/><polyline points={line}/><g>{points.map(point=><g key={point.label}><circle cx={point.x} cy={point.y} r="5"/><text x={point.x} y={point.y-14}>{point.value}%</text></g>)}</g></svg><div className="months">{points.map(point=><span key={point.label}>{point.label}</span>)}</div></div></article>;
+function ReadinessDrivers({ scores, setActive }) {
+  const components = scores.readiness.components;
+  const drivers = [
+    ["Crypto modernization", components.cryptoModernization, 35],
+    ["Inventory coverage", components.inventoryCoverage, 20],
+    ["Migration planning", components.migrationPlanning, 20],
+    ["Governance maturity", components.governanceMaturity, 15],
+    ["Compensating controls", components.compensatingControls, 10],
+  ];
+  return <article className="card trend-card readiness-drivers"><div className="card-heading"><span><Activity />What drives your {scores.readiness.score} readiness score?</span><button className="text-link" onClick={()=>setActive("Q-Day Readiness")}>View calculation <ChevronRight/></button></div><p>Every bar is an observed input to the single Quantum Readiness Score. The percentage at right is that input’s weight.</p><div className="driver-list">{drivers.map(([label,value,weight])=><div className="driver-row" key={label}><span>{label}</span><div><i style={{width:`${Math.max(2,value)}%`}}/></div><strong>{Math.round(value)}%</strong><small>{weight}% weight</small></div>)}</div></article>;
 }
 
 function Overview({ data, scores, scans, setActive, openProfile }) {
@@ -111,6 +110,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
   const summary = data?.summary || {};
   const total = summary.totalAssets || 15;
   const critical = summary.criticalCount || 8;
+  const safe = summary.safeCount || 2;
   const readiness = scores.readiness;
   const horizon = QDAY_SCENARIOS[scenario];
   return <>
@@ -124,8 +124,8 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
       <article className="card horizon"><div className="card-heading"><span><CalendarClock />Q-Day horizon</span><button className="info-tip" aria-label="About the Q-Day horizon"><CircleHelp/><span className="tooltip"><b>Q-Day is a moving threshold—not a date like Y2K.</b> These scenarios are planning assumptions. Your organization should set an earlier readiness deadline based on data lifetime, migration complexity, and risk tolerance.</span></button></div><strong>{daysUntil(horizon.date)}</strong><h2>days</h2><p className="horizon-date">Scenario threshold · {new Date(`${horizon.date}T00:00:00`).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}</p><label>External scenario<select value={scenario} onChange={event=>setScenario(event.target.value)}><option value="ionq">IonQ 2029</option><option value="conservative">Conservative 2032</option><option value="accelerated">Accelerated 2028</option></select><small>{horizon.note}</small></label></article>
       <Metric icon={ShieldAlert} value={critical} label="critical exposures" tone="red" trend="Requires action" />
       <Metric icon={Building2} value={total} label="observed assets" tone="blue" trend="Evidence inventory" />
-      <Metric icon={ShieldCheck} value={scores.confidence.level} label="evidence confidence" tone="green" trend={`${scores.confidence.coverage}% field coverage`} />
-      <ModernizationTrend rows={data?.trends}/>
+      <Metric icon={ShieldCheck} value={`${safe} of ${total}`} label="quantum-safe assets" tone="green" trend={`${total-safe} still need modernization`} />
+      <ReadinessDrivers scores={scores} setActive={setActive}/>
       <article className="card priorities"><div className="card-heading"><span><Target />Top priorities</span><button className="text-link" onClick={() => setActive("Remediation")}>View all <ChevronRight /></button></div>{[
         ["api-gateway-prod-01","RSA-2048","Alex R.","May 28"], ["vpn-concentrator-01","ECDH P-256","Maya K.","May 30"], ["ca-root-internal","RSA-4096","Chris D.","Jun 2"],
       ].map((r,i)=><div className="priority-row" key={r[0]}><span className="severity">Critical</span><div><b>{r[0]}</b><small>{r[1]}</small></div><span className={`mini-avatar a${i}`}>{r[2][0]}</span><span>{r[2]}</span><span><Clock3 />{r[3]}</span><button>Open plan</button></div>)}</article>

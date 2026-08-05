@@ -50,6 +50,15 @@
 
 final result: passed
 
+## 2026-08-05 — Overview context pass
+
+- Replaced the unexplained Evidence Confidence card with Quantum-safe assets: a concrete `2 of 15` coverage measure and the remaining modernization count.
+- Replaced the disconnected historical trend with a readiness-driver breakdown tied directly to the current score, its five evidence inputs, and their calculation weights.
+- Added a direct View calculation action to the Q-Day Readiness methodology.
+- Verified the rendered Overview and browser console; no P0/P1/P2 issues or console errors remain.
+
+final result: passed
+
 ## 2026-08-05 — Single-score and organization onboarding pass
 
 - Source: user-selected card dashboard plus supplied Dytallix organization-profile reference.

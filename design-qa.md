@@ -49,3 +49,14 @@
 - P3: consider a compact activity animation during longer network discovery jobs.
 
 final result: passed
+
+## 2026-08-05 — Single-score and organization onboarding pass
+
+- Source: user-selected card dashboard plus supplied Dytallix organization-profile reference.
+- Implemented a single organization-level Quantum Readiness Score; exposure is now communicated through finding counts, HNDL candidates, protected assets, and severity labels.
+- Added a left-side Organization Onboarding panel attached to Overview. It disappears after save and reopens from the Overview header.
+- Verified the geography + industry interaction: United States + Finance automatically displayed NIST CSF 2.0, NIST IR 8547, GLBA, NYDFS 23 NYCRR 500, and PCI DSS 4.0.
+- Verified save, disappearance, reopen, preserved values, responsive drawer layout, and zero browser console warnings/errors.
+- P0/P1/P2 issues: none remaining.
+
+final result: passed

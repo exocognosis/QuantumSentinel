@@ -28,6 +28,12 @@ const QDAY_SCENARIOS = {
   accelerated: { label: "Accelerated 2028", date: "2028-01-01", note: "Stress-test scenario for earlier capability" },
 };
 
+const EMPTY_PROFILE = { name: "", industry: "", geography: "", size: "", dataAssets: [], regimes: [] };
+function savedProfile() {
+  try { return JSON.parse(localStorage.getItem("quantumSentinel.organizationProfile")) || EMPTY_PROFILE; }
+  catch { return EMPTY_PROFILE; }
+}
+
 function daysUntil(date) {
   const target = new Date(`${date}T00:00:00`);
   const today = new Date();
@@ -47,13 +53,13 @@ function Brand() {
   return <div className="brand"><span className="brand-mark"><Shield /></span><span>Quantum<b>Sentinel</b></span></div>;
 }
 
-function Header({ active, setActive }) {
+function Header({ active, setActive, openProfile }) {
   return <header className="app-header">
     <Brand />
     <nav aria-label="Primary navigation">
       {NAV.map(([label, Icon]) => <button key={label} className={active === label ? "active" : ""} onClick={() => setActive(label)}><Icon />{label}</button>)}
     </nav>
-    <div className="header-tools"><span className="live"><i />System live</span><button className="icon-button" aria-label="Notifications"><Bell /></button><button className="avatar">RG</button><ChevronDown className="chevron" /></div>
+    <div className="header-tools"><span className="live"><i />System live</span><button className="icon-button" aria-label="Notifications"><Bell /></button><button className="avatar" onClick={openProfile} aria-label="Open organization profile">RG</button><ChevronDown className="chevron" /></div>
   </header>;
 }
 
@@ -71,6 +77,22 @@ function Metric({ icon: Icon, value, label, tone = "blue", trend }) {
   return <article className="metric-card"><span className={`metric-icon ${tone}`}><Icon /></span><strong>{value}</strong><h3>{label}</h3>{trend && <p className={trendClass}>{trend}</p>}</article>;
 }
 
+const REGULATORY_REGIMES = {
+  "United States": { default: ["NIST CSF 2.0", "NIST IR 8547"], Finance: ["GLBA", "NYDFS 23 NYCRR 500", "PCI DSS 4.0"], Healthcare: ["HIPAA Security Rule", "HITRUST CSF"], Energy: ["NERC CIP"], Defense: ["CMMC 2.0", "DFARS 252.204-7012"] },
+  "European Union": { default: ["GDPR", "NIS2"], Finance: ["DORA"], Healthcare: ["EHDS", "MDR"], Energy: ["NIS2 Critical Entities"], Defense: ["EU classified information rules"] },
+  "United Kingdom": { default: ["UK GDPR", "NIS Regulations"], Finance: ["FCA Operational Resilience"], Healthcare: ["NHS DSP Toolkit"], Energy: ["NIS Regulations"], Defense: ["Defence Cyber Protection Partnership"] },
+  Canada: { default: ["PIPEDA"], Finance: ["OSFI B-13"], Healthcare: ["Provincial health privacy laws"], Energy: ["NERC CIP where applicable"], Defense: ["Controlled Goods Program"] },
+};
+
+function OrganizationProfile({ initialProfile, onSave, onClose }) {
+  const [profile, setProfile] = useState(initialProfile);
+  const regimes = [...(REGULATORY_REGIMES[profile.geography]?.default || []), ...(REGULATORY_REGIMES[profile.geography]?.[profile.industry] || [])];
+  const assets = ["PII", "PHI", "Financial records", "Intellectual property", "Government data", "Customer data"];
+  const update = (key, value) => setProfile(current => ({ ...current, [key]: value }));
+  const toggleAsset = asset => update("dataAssets", profile.dataAssets.includes(asset) ? profile.dataAssets.filter(item => item !== asset) : [...profile.dataAssets, asset]);
+  return <aside className="onboarding-panel" aria-labelledby="profile-title"><div className="onboarding-heading"><div><span className="eyebrow">Organization onboarding</span><h1 id="profile-title">Build your readiness baseline</h1><p>Your profile tailors regulatory context, evidence priorities, and the Quantum Readiness Score.</p></div><button className="icon-button" onClick={onClose} aria-label="Close profile">×</button></div><div className="profile-grid"><div className="profile-form"><label>Organization name<input value={profile.name} onChange={event=>update("name",event.target.value)} placeholder="Acme Corporation"/></label><div className="field-pair"><label>Industry<select value={profile.industry} onChange={event=>update("industry",event.target.value)}><option value="">Select industry</option>{["Finance","Healthcare","Energy","Defense","Technology","Government"].map(item=><option key={item}>{item}</option>)}</select></label><label>Primary geography<select value={profile.geography} onChange={event=>update("geography",event.target.value)}><option value="">Select geography</option>{Object.keys(REGULATORY_REGIMES).map(item=><option key={item}>{item}</option>)}</select></label></div><label>Organization size<select value={profile.size} onChange={event=>update("size",event.target.value)}><option value="">Select size</option><option>1–249 employees</option><option>250–999 employees</option><option>1,000–9,999 employees</option><option>10,000+ employees</option></select></label><fieldset><legend>Data and digital assets</legend><div className="profile-checks">{assets.map(asset=><label key={asset}><input type="checkbox" checked={profile.dataAssets.includes(asset)} onChange={()=>toggleAsset(asset)}/><span>{asset}</span></label>)}</div></fieldset></div><aside className="regime-card"><span className="metric-icon blue"><ShieldCheck/></span><h2>Regulatory context</h2><p>Suggested from your primary geography and industry.</p>{regimes.length?<div className="regime-list">{regimes.map(regime=><span key={regime}><Check/>{regime}</span>)}</div>:<div className="regime-empty">Select a geography and industry to see likely regimes.</div>}<small>Guidance only. Applicability depends on operations, customers, contracts, and legal interpretation.</small></aside></div><div className="onboarding-actions"><button className="secondary" onClick={onClose}>Finish later</button><button className="primary" disabled={!profile.name||!profile.industry||!profile.geography} onClick={()=>onSave({...profile,regimes})}><Check/>Save organization profile</button></div></aside>;
+}
+
 function ModernizationTrend({ rows = [] }) {
   const series = rows.length ? rows.slice(-6) : [{day:"—",safe:0}];
   const points = series.map((row,index) => ({
@@ -84,30 +106,30 @@ function ModernizationTrend({ rows = [] }) {
   return <article className="card trend-card"><div className="card-heading"><span><Activity />Crypto modernization trend</span><span className="confidence-pill">Observed evidence</span></div><p>Share of inventoried assets using hybrid or quantum-safe cryptography</p><div className="chart" aria-label={`Modernization increased from ${points[0].value}% to ${points.at(-1).value}%`}><div className="chart-grid"/><svg viewBox="0 0 620 180" role="img"><path className="area" d={area}/><polyline points={line}/><g>{points.map(point=><g key={point.label}><circle cx={point.x} cy={point.y} r="5"/><text x={point.x} y={point.y-14}>{point.value}%</text></g>)}</g></svg><div className="months">{points.map(point=><span key={point.label}>{point.label}</span>)}</div></div></article>;
 }
 
-function Overview({ data, scores, scans, setActive }) {
+function Overview({ data, scores, scans, setActive, openProfile }) {
   const [scenario, setScenario] = useState("ionq");
   const summary = data?.summary || {};
   const total = summary.totalAssets || 15;
   const critical = summary.criticalCount || 8;
   const readiness = scores.readiness;
-  const risk = scores.risk;
   const horizon = QDAY_SCENARIOS[scenario];
   return <>
     <PageTitle title="Good morning, Rick" subtitle="Your cryptographic exposure, distilled.">
+      <button className="secondary" onClick={openProfile}><Building2 />Organization profile</button>
       <button className="primary" onClick={() => setActive("Scan")}><Play />Run a scan</button>
       <button className="secondary" onClick={() => setActive("Reports")}><FileText />View report</button>
     </PageTitle>
     <section className="overview-grid">
       <article className="card readiness-summary"><div className="card-heading"><span><ShieldCheck />Q-Day Readiness</span><CircleHelp /></div><div className="readiness-content"><ScoreRing score={readiness.score} /><div><h2 className={readiness.score>=70?"good":readiness.score>=50?"warn":"bad"}>{readiness.classification}</h2><p>{critical} critical systems still depend on quantum-vulnerable cryptography.</p><span className="direction better">↑ {readiness.direction}</span></div></div><button className="text-link" onClick={() => setActive("Q-Day Readiness")}>How this score works <ChevronRight /></button></article>
       <article className="card horizon"><div className="card-heading"><span><CalendarClock />Q-Day horizon</span><button className="info-tip" aria-label="About the Q-Day horizon"><CircleHelp/><span className="tooltip"><b>Q-Day is a moving threshold—not a date like Y2K.</b> These scenarios are planning assumptions. Your organization should set an earlier readiness deadline based on data lifetime, migration complexity, and risk tolerance.</span></button></div><strong>{daysUntil(horizon.date)}</strong><h2>days</h2><p className="horizon-date">Scenario threshold · {new Date(`${horizon.date}T00:00:00`).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}</p><label>External scenario<select value={scenario} onChange={event=>setScenario(event.target.value)}><option value="ionq">IonQ 2029</option><option value="conservative">Conservative 2032</option><option value="accelerated">Accelerated 2028</option></select><small>{horizon.note}</small></label></article>
-      <Metric icon={ShieldAlert} value={`${risk.score}/100`} label={`quantum risk · ${risk.classification}`} tone="red" trend="Higher is worse" />
+      <Metric icon={ShieldAlert} value={critical} label="critical exposures" tone="red" trend="Requires action" />
       <Metric icon={Building2} value={total} label="observed assets" tone="blue" trend="Evidence inventory" />
       <Metric icon={ShieldCheck} value={scores.confidence.level} label="evidence confidence" tone="green" trend={`${scores.confidence.coverage}% field coverage`} />
       <ModernizationTrend rows={data?.trends}/>
       <article className="card priorities"><div className="card-heading"><span><Target />Top priorities</span><button className="text-link" onClick={() => setActive("Remediation")}>View all <ChevronRight /></button></div>{[
         ["api-gateway-prod-01","RSA-2048","Alex R.","May 28"], ["vpn-concentrator-01","ECDH P-256","Maya K.","May 30"], ["ca-root-internal","RSA-4096","Chris D.","Jun 2"],
       ].map((r,i)=><div className="priority-row" key={r[0]}><span className="severity">Critical</span><div><b>{r[0]}</b><small>{r[1]}</small></div><span className={`mini-avatar a${i}`}>{r[2][0]}</span><span>{r[2]}</span><span><Clock3 />{r[3]}</span><button>Open plan</button></div>)}</article>
-      <button className="latest-scan" onClick={() => setActive("Exposure")}><Globe2/><span><small>Latest scan evidence</small><b>{scans[0]?.targetLabel || "example.com"}</b> — <strong>{scans[0]?.riskScore > 0 ? `Risk ${scans[0].riskScore}/100` : "No portfolio score"}</strong> — {timeAgo(scans[0]?.completedAt)}</span><ChevronRight/></button>
+      <button className="latest-scan" onClick={() => setActive("Exposure")}><Globe2/><span><small>Latest scan evidence</small><b>{scans[0]?.targetLabel || "example.com"}</b> — <strong>Evidence saved</strong> — {timeAgo(scans[0]?.completedAt)}</span><ChevronRight/></button>
     </section>
   </>;
 }
@@ -158,38 +180,42 @@ function Scan({ scans, setScans }) {
 
 function RecentScans({ scans, onRescan }) {
   const rows = [...scans, ...FALLBACK_SCANS].filter((s,i,a)=>a.findIndex(x=>x.targetLabel===s.targetLabel)===i).slice(0,3);
-  return <article className="card recent-card"><div className="card-heading"><span><Clock3/>Recent scans</span><button className="text-link">View all</button></div>{rows.map(scan=>{const hasScore=Number.isFinite(scan.riskScore)&&scan.riskScore>0;return <div className="recent-row" key={scan.id}><span className="metric-icon blue">{scan.type==="local"?<Laptop/>:<Globe2/>}</span><div><b>{scan.targetLabel}</b><small>{timeAgo(scan.completedAt)}</small></div><span className={`score ${hasScore?"score-risk":"score-none"}`}>{hasScore?`${scan.riskScore}/100`:"—"} <small>{hasScore?"Risk":"No score"}</small></span><button onClick={()=>onRescan(scan)} aria-label={`Rescan ${scan.targetLabel}`}><RefreshCw/><small>Rescan</small></button></div>})}</article>;
+  return <article className="card recent-card"><div className="card-heading"><span><Clock3/>Recent scans</span><button className="text-link">View all</button></div>{rows.map(scan=><div className="recent-row" key={scan.id}><span className="metric-icon blue">{scan.type==="local"?<Laptop/>:<Globe2/>}</span><div><b>{scan.targetLabel}</b><small>{timeAgo(scan.completedAt)}</small></div><span className="score score-evidence"><Check/> <small>Evidence saved</small></span><button onClick={()=>onRescan(scan)} aria-label={`Rescan ${scan.targetLabel}`}><RefreshCw/><small>Rescan</small></button></div>)}</article>;
 }
 
 function Readiness({ scores }) {
   const readiness = scores.readiness;
   const components = readiness.components;
   const [organizationTarget, setOrganizationTarget] = useState("2028-06-30");
-  return <><PageTitle title="Q-Day Readiness" subtitle="How prepared the organization is to identify, prioritize, and migrate quantum-vulnerable systems."/><section className="content-grid"><article className="card score-explainer"><ScoreRing score={readiness.score}/><div><span className="eyebrow">Presumed readiness · Higher is better</span><h2>{readiness.score} / 100 · {readiness.classification}</h2><p>This is a preparedness measure, not the inverse of quantum risk. It evaluates modernization, inventory coverage, migration planning, governance, and compensating controls from the available evidence.</p><span className="confidence-pill">{scores.confidence.label} · {scores.confidence.coverage}% coverage</span></div></article><article className="card methodology"><h2>How readiness is calculated</h2>{[["Crypto modernization",35,"Share of assets using hybrid or quantum-safe cryptography",components.cryptoModernization],["Inventory coverage",20,"Completeness of algorithm, protocol, classification, and risk evidence",components.inventoryCoverage],["Migration planning",20,"Vulnerable assets with a documented migration path",components.migrationPlanning],["Governance maturity",15,"Policy and compliance implementation progress",components.governanceMaturity],["Compensating controls",10,"Observed protections such as perfect forward secrecy",components.compensatingControls]].map(([t,w,d,v])=><div className="weight-row" key={t}><span>{w}%</span><div><b>{t}</b><small>{d}</small></div><div className="component-value"><i style={{width:`${Math.max(2,v)}%`}}/><em>{Math.round(v)} evidence points</em></div></div>)}</article><article className="card formula"><CircleHelp/><div><h3>Readiness interpretation</h3><p><b>0–24:</b> Unprepared · <b>25–49:</b> Early-stage · <b>50–69:</b> Transitioning · <b>70–84:</b> Prepared · <b>85–100:</b> Quantum-ready</p><small>Unknown or incomplete evidence reduces confidence; it must never be treated as proof of quantum safety.</small></div></article><article className="card org-timeline"><div><span className="eyebrow">Your controllable timeline</span><h2>Organizational readiness deadline</h2><p>Set when critical systems must be inventoried, migration-tested, and protected. This deadline should precede every external Q-Day scenario.</p></div><label>Target readiness date<input type="date" value={organizationTarget} onChange={event=>setOrganizationTarget(event.target.value)}/><small>{daysUntil(organizationTarget).toLocaleString()} days remaining</small></label><div className="timeline-steps"><span className="done"><Check/>Inventory baseline</span><span><CalendarClock/>Migration pilots</span><span><ShieldCheck/>Critical systems ready</span></div></article></section></>;
+  return <><PageTitle title="Q-Day Readiness" subtitle="How prepared the organization is to identify, prioritize, and migrate quantum-vulnerable systems."/><section className="content-grid"><article className="card score-explainer"><ScoreRing score={readiness.score}/><div><span className="eyebrow">The Quantum Readiness Score · Higher is better</span><h2>{readiness.score} / 100 · {readiness.classification}</h2><p>This is QuantumSentinel’s single headline score. It evaluates modernization, inventory coverage, migration planning, governance, and compensating controls from the available evidence.</p><span className="confidence-pill">{scores.confidence.label} · {scores.confidence.coverage}% coverage</span></div></article><article className="card methodology"><h2>How readiness is calculated</h2>{[["Crypto modernization",35,"Share of assets using hybrid or quantum-safe cryptography",components.cryptoModernization],["Inventory coverage",20,"Completeness of algorithm, protocol, classification, and risk evidence",components.inventoryCoverage],["Migration planning",20,"Vulnerable assets with a documented migration path",components.migrationPlanning],["Governance maturity",15,"Policy and compliance implementation progress",components.governanceMaturity],["Compensating controls",10,"Observed protections such as perfect forward secrecy",components.compensatingControls]].map(([t,w,d,v])=><div className="weight-row" key={t}><span>{w}%</span><div><b>{t}</b><small>{d}</small></div><div className="component-value"><i style={{width:`${Math.max(2,v)}%`}}/><em>{Math.round(v)} evidence points</em></div></div>)}</article><article className="card formula"><CircleHelp/><div><h3>Readiness interpretation</h3><p><b>0–24:</b> Unprepared · <b>25–49:</b> Early-stage · <b>50–69:</b> Transitioning · <b>70–84:</b> Prepared · <b>85–100:</b> Quantum-ready</p><small>Unknown or incomplete evidence reduces confidence; it must never be treated as proof of quantum safety.</small></div></article><article className="card org-timeline"><div><span className="eyebrow">Your controllable timeline</span><h2>Organizational readiness deadline</h2><p>Set when critical systems must be inventoried, migration-tested, and protected. This deadline should precede every external Q-Day scenario.</p></div><label>Target readiness date<input type="date" value={organizationTarget} onChange={event=>setOrganizationTarget(event.target.value)}/><small>{daysUntil(organizationTarget).toLocaleString()} days remaining</small></label><div className="timeline-steps"><span className="done"><Check/>Inventory baseline</span><span><CalendarClock/>Migration pilots</span><span><ShieldCheck/>Critical systems ready</span></div></article></section></>;
 }
 
-function Exposure({ data, scores }) {
+function Exposure({ data }) {
   const assets = data?.assets || [];
-  return <><PageTitle title="Quantum Risk & Exposure" subtitle="The likelihood and potential impact of harm from quantum-vulnerable cryptography. Higher is worse."><button className="secondary"><FileDown/>Export snapshot</button></PageTitle><section className="content-grid"><Metric icon={ShieldAlert} value={`${scores.risk.score}/100`} label={`quantum risk · ${scores.risk.classification}`} tone="red" trend="Higher is worse"/><Metric icon={Clock3} value={data?.summary?.shorCount||12} label="HNDL candidates" tone="red"/><Metric icon={ShieldCheck} value={data?.summary?.safeCount||2} label="protected assets" tone="green"/><article className="card asset-list"><div className="card-heading"><span><Building2/>Highest exposure</span><div className="chips"><button className="selected">All</button><button>Public</button><button>Internal</button></div></div>{(assets.length?assets.slice(0,6):[{name:"api-gateway-prod-01",algo:"RSA-2048",risk:91},{name:"vpn-concentrator-01",algo:"ECDH P-256",risk:88},{name:"ca-root-internal",algo:"RSA-4096",risk:84}]).map((a,i)=><div className="asset-row" key={a.id||a.name||i}><span className="metric-icon red"><ShieldAlert/></span><div><b>{a.hostname||a.name||a.id}</b><small>{a.algo||a.algorithm||a.cls||"Legacy cryptography"}</small></div><span className="risk-bar"><i style={{width:`${a.risk||80}%`}}/></span><strong>{a.risk||80}</strong><button>View <ChevronRight/></button></div>)}</article></section></>;
+  const critical = assets.filter(asset => asset.prio === "CRITICAL").length || data?.summary?.criticalCount || 8;
+  return <><PageTitle title="Quantum Exposure" subtitle="Where quantum-vulnerable cryptography creates urgency across the observed environment."><button className="secondary"><FileDown/>Export snapshot</button></PageTitle><section className="content-grid"><Metric icon={ShieldAlert} value={critical} label="critical exposures" tone="red" trend="Requires action"/><Metric icon={Clock3} value={data?.summary?.shorCount||12} label="HNDL candidates" tone="red"/><Metric icon={ShieldCheck} value={data?.summary?.safeCount||2} label="protected assets" tone="green"/><article className="card asset-list"><div className="card-heading"><span><Building2/>Highest exposure</span><div className="chips"><button className="selected">All</button><button>Public</button><button>Internal</button></div></div>{(assets.length?assets.slice(0,6):[{name:"api-gateway-prod-01",algo:"RSA-2048",prio:"CRITICAL"},{name:"vpn-concentrator-01",algo:"ECDH P-256",prio:"CRITICAL"},{name:"ca-root-internal",algo:"RSA-4096",prio:"HIGH"}]).map((a,i)=><div className="asset-row" key={a.id||a.name||i}><span className="metric-icon red"><ShieldAlert/></span><div><b>{a.hostname||a.name||a.id}</b><small>{a.algo||a.algorithm||a.cls||"Legacy cryptography"}</small></div><span className="severity">{a.prio||"HIGH"}</span><span>{a.segment||"Observed asset"}</span><button>View <ChevronRight/></button></div>)}</article></section></>;
 }
 
 function Remediation() { return <><PageTitle title="Remediation" subtitle="Turn quantum risk into an owned, sequenced migration plan."><button className="primary"><Wrench/>Create plan</button></PageTitle><section className="content-grid"><Metric icon={Target} value="8" label="open actions" tone="red"/><Metric icon={Activity} value="3" label="in progress" tone="blue"/><Metric icon={Check} value="4" label="completed" tone="green"/><article className="card asset-list"><div className="card-heading"><span><Wrench/>Migration queue</span><button className="text-link">Sort by urgency <ChevronDown/></button></div>{[["Replace RSA key exchange","api-gateway-prod-01","Alex R.","May 28","In progress"],["Pilot hybrid TLS","vpn-concentrator-01","Maya K.","May 30","Planned"],["Rotate root hierarchy","ca-root-internal","Chris D.","Jun 2","Blocked"]].map((x,i)=><div className="asset-row" key={x[0]}><span className={`step-number s${i}`}>{i+1}</span><div><b>{x[0]}</b><small>{x[1]}</small></div><span>{x[2]}</span><span>{x[3]}</span><span className="status-pill">{x[4]}</span><button>Open <ChevronRight/></button></div>)}</article></section></> }
 
-function Reports({ scores }) { const cards=[["Executive posture",`Risk ${scores.risk.score}/100 · Readiness ${scores.readiness.score}/100 · ${scores.confidence.level} confidence`],["Q-Day readiness",`${scores.readiness.classification} · Higher is better · methodology and evidence`],["Quantum risk & exposure",`${scores.risk.classification} · Higher is worse · observed assets and findings`],["Migration plan","Owners, milestones, dependencies, and expected score impact"]]; return <><PageTitle title="Reports" subtitle="Clear, evidence-backed outputs that keep quantum risk and readiness distinct."><button className="primary"><FileDown/>Generate report</button></PageTitle><section className="report-grid">{cards.map(([t,d],i)=><article className="card report-card" key={t}><span className={`report-icon r${i}`}><FileText/></span><div><h2>{t}</h2><p>{d}</p><small>Updated today · PDF & JSON</small></div><button className="secondary">Open <ChevronRight/></button></article>)}</section></> }
+function Reports({ scores }) { const cards=[["Executive posture",`Readiness ${scores.readiness.score}/100 · ${scores.readiness.classification} · ${scores.confidence.level} confidence`],["Q-Day readiness",`${scores.readiness.classification} · methodology, evidence, and timeline`],["Exposure findings","Critical findings, HNDL candidates, and affected assets"],["Migration plan","Owners, milestones, dependencies, and expected readiness impact"]]; return <><PageTitle title="Reports" subtitle="Clear, evidence-backed outputs centered on one Quantum Readiness Score."><button className="primary"><FileDown/>Generate report</button></PageTitle><section className="report-grid">{cards.map(([t,d],i)=><article className="card report-card" key={t}><span className={`report-icon r${i}`}><FileText/></span><div><h2>{t}</h2><p>{d}</p><small>Updated today · PDF & JSON</small></div><button className="secondary">Open <ChevronRight/></button></article>)}</section></> }
 
 export default function App() {
-  const [active, setActive] = useState("Scan");
+  const [active, setActive] = useState(() => savedProfile().name ? "Scan" : "Overview");
   const [data, setData] = useState(null);
   const [scans, setScans] = useState(FALLBACK_SCANS);
+  const [profile, setProfile] = useState(savedProfile);
+  const [profileOpen, setProfileOpen] = useState(() => !savedProfile().name);
   useEffect(() => { Promise.all([loadApplianceData(), loadProbeJobs()]).then(([d,j]) => { setData(d); if (j?.length) setScans(j); }); }, []);
   const scores = useMemo(() => deriveQuantumScores(data || {}), [data]);
   const page = useMemo(() => {
-    if (active === "Overview") return <Overview data={data} scores={scores} scans={scans} setActive={setActive}/>;
+    if (active === "Overview") return <Overview data={data} scores={scores} scans={scans} setActive={setActive} openProfile={()=>setProfileOpen(true)}/>;
     if (active === "Q-Day Readiness") return <Readiness scores={scores}/>;
     if (active === "Scan") return <Scan scans={scans} setScans={setScans}/>;
     if (active === "Exposure") return <Exposure data={data} scores={scores}/>;
     if (active === "Remediation") return <Remediation/>;
     return <Reports scores={scores}/>;
   }, [active, data, scores, scans]);
-  return <div className="app"><Header active={active} setActive={setActive}/><main>{page}</main><footer>QuantumSentinel · Evidence, not hype. <span>Only scan systems you own or are authorized to assess.</span></footer></div>;
+  const saveProfile = next => { setProfile(next); localStorage.setItem("quantumSentinel.organizationProfile", JSON.stringify(next)); setProfileOpen(false); };
+  return <div className={`app ${profileOpen&&active==="Overview"?"profile-open":""}`}><Header active={active} setActive={setActive} openProfile={()=>{setActive("Overview");setProfileOpen(true)}}/>{profileOpen&&active==="Overview"&&<OrganizationProfile initialProfile={profile} onSave={saveProfile} onClose={()=>setProfileOpen(false)}/>}<main>{page}</main><footer>QuantumSentinel · Evidence, not hype. <span>Only scan systems you own or are authorized to assess.</span></footer></div>;
 }

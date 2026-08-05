@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
-  Bell,
   Building2,
   CalendarClock,
   Check,
@@ -151,7 +150,7 @@ function Brand() {
   );
 }
 
-function Header({ active, setActive, openProfile }) {
+function Header({ active, setActive }) {
   return (
     <header className="app-header">
       <Brand />
@@ -172,17 +171,6 @@ function Header({ active, setActive, openProfile }) {
           <i />
           System live
         </span>
-        <button className="icon-button" aria-label="Notifications">
-          <Bell />
-        </button>
-        <button
-          className="avatar"
-          onClick={openProfile}
-          aria-label="Open organization profile"
-        >
-          RG
-        </button>
-        <ChevronDown className="chevron" />
       </div>
     </header>
   );
@@ -2246,14 +2234,7 @@ export default function App() {
     <div
       className={`app ${profileOpen && active === "Overview" ? "profile-open" : ""}`}
     >
-      <Header
-        active={active}
-        setActive={setActive}
-        openProfile={() => {
-          setActive("Overview");
-          setProfileOpen(true);
-        }}
-      />
+      <Header active={active} setActive={setActive} />
       {profileOpen && active === "Overview" && (
         <OrganizationProfile
           initialProfile={profile}

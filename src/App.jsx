@@ -1853,7 +1853,7 @@ async function downloadMigrationPlan(action) {
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(11);
   pdf.setTextColor(7, 94, 232);
-  pdf.text("QUANTUMSENTINEL", margin, y);
+  pdf.text("QUANTUM SENTINEL", margin, y);
   y += 27;
   pdf.setFont("helvetica", "bold");
   writeWrapped(`${action.title} - Quantum Migration Plan`, 24, [14, 35, 70], 0, 12);
@@ -2095,7 +2095,7 @@ async function downloadReportPdf(report) {
   const ensure = needed => { if (y + needed > height - 54) addPage(); };
   const write = (text, size = 10, color = [54, 72, 103], gap = 7, indent = 0) => { pdf.setFontSize(size); pdf.setTextColor(...color); const lines = pdf.splitTextToSize(clean(text), usable - indent); pdf.text(lines, margin + indent, y); y += lines.length * (size + 3) + gap; };
   pdf.setFillColor(7, 94, 232); pdf.rect(0, 0, width, 12, "F");
-  pdf.setFont("helvetica", "bold"); write("QUANTUMSENTINEL", 11, [7, 94, 232], 18); write(report.title, 26, [14, 35, 70], 10);
+  pdf.setFont("helvetica", "bold"); write("QUANTUM SENTINEL", 11, [7, 94, 232], 18); write(report.title, 26, [14, 35, 70], 10);
   pdf.setFont("helvetica", "normal"); write(report.description, 11, [90, 109, 143], 20);
   pdf.setDrawColor(218, 226, 238); pdf.line(margin, y, width - margin, y); y += 24;
   pdf.setFont("helvetica", "bold"); write("Current evidence snapshot", 16, [14, 35, 70], 12);

@@ -72,6 +72,14 @@ Open `http://127.0.0.1:5173`.
 
 The launcher starts both services and opens the dashboard. The API listens on `http://127.0.0.1:8787`; the web server proxies `/api` to that API. Set `HOST`, `PORT`, `WEB_PORT`, `QS_NO_OPEN=1`, or `QS_DATASTORE_PATH` when you need a different bind address, API port, dashboard port, browser behavior, or datastore file.
 
+`npm start` resumes the current local assessment, including its scans, scores,
+findings, and reports. To start a clean isolated assessment without deleting or
+changing the existing evidence store, run:
+
+```sh
+npm run fresh
+```
+
 ## Development Commands
 
 ```sh

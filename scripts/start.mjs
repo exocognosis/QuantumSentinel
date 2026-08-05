@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const host = process.env.HOST || "127.0.0.1";
@@ -9,8 +12,12 @@ const requestedApiPort = Number(process.env.PORT || 8787);
 const requestedWebPort = Number(process.env.WEB_PORT || 5173);
 const explicitlySetApiPort = Boolean(process.env.PORT);
 const explicitlySetWebPort = Boolean(process.env.WEB_PORT);
+const freshAssessment = process.argv.includes("--fresh") || process.env.QS_FRESH === "1";
+const freshDirectory = freshAssessment ? await mkdtemp(join(tmpdir(), "quantumsentinel-assessment-")) : null;
+const datastorePath = freshDirectory ? join(freshDirectory, "evidence.db") : process.env.QS_DATASTORE_PATH;
 
 console.log("Preparing the latest Quantum Sentinel dashboard...");
+if (freshAssessment) console.log("Starting a clean, isolated assessment. Existing evidence will not be changed.");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const build = spawnSync(npmCommand, ["run", "build"], { stdio: "inherit" });
 if (build.error || build.status !== 0) {
@@ -78,7 +85,11 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-run(process.execPath, ["server/index.js"], { HOST: host, PORT: String(apiPort) });
+run(process.execPath, ["server/index.js"], {
+  HOST: host,
+  PORT: String(apiPort),
+  ...(datastorePath ? { QS_DATASTORE_PATH: datastorePath } : {}),
+});
 
 let healthy = false;
 for (let attempt = 0; attempt < 30; attempt += 1) {

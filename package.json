@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "node scripts/start.mjs",
+    "fresh": "node scripts/start.mjs --fresh",
     "api": "node server/index.js",
     "dev": "vite",
     "web": "node server/web.js",

@@ -540,7 +540,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
   return (
     <>
       <PageTitle
-        title="Good morning, Rick"
+        title="Hello There..."
         subtitle="Your cryptographic exposure, distilled."
       >
         <button className="secondary" onClick={openProfile}>

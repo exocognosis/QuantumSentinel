@@ -2022,7 +2022,7 @@ async function downloadMigrationPlan(action) {
   pdf.save(`quantumsentinel-${filename}-plan.pdf`);
 }
 
-function Remediation({ data }) {
+function Remediation({ data, scans = [] }) {
   const legacySeedIds = new Set(["rsa-gateway", "hybrid-vpn", "root-hierarchy"]);
   const [actions, setActions] = useState(() => {
     try {
@@ -2034,16 +2034,32 @@ function Remediation({ data }) {
   });
   const evidenceActions = useMemo(() => (data?.assets || [])
     .filter((asset) => !["HYBRID", "QUANTUM-SAFE"].includes(asset.cls))
-    .map((asset) => ({
-      id: `evidence-${asset.id}`,
-      title: `Modernize ${asset.hostname || asset.name || `asset ${asset.id}`}`,
-      asset: asset.hostname || asset.name || String(asset.id),
-      owner: "Unassigned",
-      due: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
-      status: "Planned",
-      urgency: Number(asset.risk) || 50,
-      target: asset.migration || "Define a hybrid or post-quantum target state",
-    })), [data]);
+    .map((asset) => {
+      const assetName = asset.hostname || asset.name || String(asset.id);
+      const sourceScan = scans.find((scan) => {
+        const directHost = scan.target?.host ?? scan.request?.host;
+        const observations = scan.result?.observations || [];
+        return directHost === assetName || observations.some((observation) => observation.host === assetName);
+      });
+      const scanType = sourceScan?.type === "device"
+        ? "This device"
+        : sourceScan?.type === "discovery"
+          ? "Authorized network"
+          : sourceScan?.type === "tls"
+            ? "Website"
+            : "Imported evidence";
+      return {
+        id: `evidence-${asset.id}`,
+        title: `Modernize ${assetName}`,
+        asset: assetName,
+        scanType,
+        owner: "Unassigned",
+        due: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
+        status: "Planned",
+        urgency: Number(asset.risk) || 50,
+        target: asset.migration || "Define a hybrid or post-quantum target state",
+      };
+    }), [data, scans]);
   const [sortBy, setSortBy] = useState("urgency");
   const [planOpen, setPlanOpen] = useState(false);
   const [selectedAction, setSelectedAction] = useState(null);
@@ -2070,6 +2086,7 @@ function Remediation({ data }) {
       owner: planOwner.trim() || "Unassigned",
       due: planDeadline,
       status: "Planned",
+      scanType: "Manual plan",
       urgency: 75,
       target: "Inventory, pilot, and migrate priority cryptography",
     };
@@ -2118,6 +2135,7 @@ function Remediation({ data }) {
                 <b>{action.title}</b>
                 <small>{action.asset}</small>
               </div>
+              <span className="scan-type-pill">{action.scanType || "Manual plan"}</span>
               <span>{action.owner}</span>
               <span>{new Date(`${action.due}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
               <span className={`status-pill ${action.status.toLowerCase().replace(" ", "-")}`}>{action.status}</span>
@@ -2293,7 +2311,7 @@ export default function App() {
     if (active === "Scan")
       return <Scan scans={scans} setScans={setScans} setActive={setActive} onEvidenceSaved={refreshEvidence} />;
     if (active === "Exposure") return <Exposure data={data} scores={scores} />;
-    if (active === "Remediation") return <Remediation data={data} />;
+    if (active === "Remediation") return <Remediation data={data} scans={scans} />;
     return <Reports scores={scores} data={data} />;
   }, [active, data, scores, scans, refreshEvidence]);
   const saveProfile = (next) => {

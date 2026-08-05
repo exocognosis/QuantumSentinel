@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { createApiServer, persistProbeResult } from "./app.js";
+import { backfillProbeAssets, createApiServer, persistProbeResult } from "./app.js";
 import { createDatastore } from "./datastore.js";
 import { buildReport } from "./reporting.js";
 
@@ -638,6 +638,111 @@ test("a direct TLS scan creates an inventory asset when the datastore starts emp
     assert.equal(assets.length, 1);
     assert.equal(assets[0].hostname, "www.dytallix.com");
     assert.equal((await datastore.listFindings({ assetId: assets[0].id })).length > 0, true);
+  } finally {
+    await datastore.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("network discovery promotes TLS observations into inventory and findings", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-discovery-assets-"));
+  const datastore = await createDatastore({ filePath: join(dir, "evidence.db"), seedAssets: [] });
+  try {
+    await persistProbeResult(datastore, {
+      id: "probe-network-ecc",
+      mode: "discovery",
+      status: "completed",
+      createdAt: "2026-08-05T12:00:00.000Z",
+      completedAt: "2026-08-05T12:00:02.000Z",
+      target: { hosts: ["ecc256.badssl.com"], ports: [443] },
+      result: {
+        observations: [{
+          observedAt: "2026-08-05T12:00:01.000Z",
+          host: "ecc256.badssl.com",
+          port: 443,
+          status: "completed",
+          reachability: { tcp: true, tls: true },
+          protocol: { name: "TLSv1.2", perfectForwardSecrecy: true },
+          certificate: { algorithm: "EC-prime256v1", fingerprint256: "EC:25:6" },
+          classification: { label: "SHOR-CRITICAL", priority: "HIGH", quantumVulnerable: true },
+          findings: ["Quantum-vulnerable certificate observed"],
+        }],
+      },
+      error: null,
+    });
+
+    const assets = await datastore.listAssets();
+    assert.equal(assets.length, 1);
+    assert.equal(assets[0].hostname, "ecc256.badssl.com");
+    assert.equal(assets[0].cls, "SHOR-CRITICAL");
+    assert.equal((await datastore.listFindings({ assetId: assets[0].id })).length > 0, true);
+  } finally {
+    await datastore.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("device discovery promotes reachable non-TLS services for remediation follow-up", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-device-assets-"));
+  const datastore = await createDatastore({ filePath: join(dir, "evidence.db"), seedAssets: [] });
+  try {
+    await persistProbeResult(datastore, {
+      id: "probe-device-local",
+      mode: "device",
+      status: "completed",
+      createdAt: "2026-08-05T12:00:00.000Z",
+      completedAt: "2026-08-05T12:00:02.000Z",
+      target: { hosts: ["127.0.0.1"], ports: [3000] },
+      result: {
+        observations: [{
+          observedAt: "2026-08-05T12:00:01.000Z",
+          host: "127.0.0.1",
+          port: 3000,
+          status: "completed",
+          reachability: { tcp: true, tls: false },
+          classification: { label: "UNKNOWN", priority: "INFO", quantumVulnerable: false },
+          findings: ["Reachable service did not present TLS evidence"],
+        }],
+      },
+      error: null,
+    });
+
+    const assets = await datastore.listAssets();
+    assert.equal(assets.length, 1);
+    assert.equal(assets[0].hostname, "127.0.0.1");
+    assert.equal(assets[0].cls, "UNKNOWN");
+    assert.equal((await datastore.listFindings({ assetId: assets[0].id })).length > 0, true);
+  } finally {
+    await datastore.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("startup backfill promotes discovery scans saved before endpoint persistence", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-probe-backfill-"));
+  const datastore = await createDatastore({ filePath: join(dir, "evidence.db"), seedAssets: [] });
+  try {
+    await datastore.createProbeJob({
+      id: "probe-legacy-network",
+      mode: "discovery",
+      status: "completed",
+      createdAt: "2026-08-05T12:00:00.000Z",
+      completedAt: "2026-08-05T12:00:02.000Z",
+      result: { observations: [{
+        observedAt: "2026-08-05T12:00:01.000Z",
+        host: "ecc256.badssl.com",
+        port: 443,
+        status: "completed",
+        reachability: { tcp: true, tls: true },
+        protocol: { name: "TLSv1.2", perfectForwardSecrecy: true },
+        certificate: { algorithm: "EC-prime256v1" },
+        classification: { label: "SHOR-CRITICAL", priority: "HIGH", quantumVulnerable: true },
+      }] },
+    });
+
+    assert.deepEqual(await backfillProbeAssets(datastore), { promoted: 1 });
+    assert.equal((await datastore.listAssets())[0].hostname, "ecc256.badssl.com");
+    assert.deepEqual(await backfillProbeAssets(datastore), { promoted: 0 });
   } finally {
     await datastore.close();
     await rm(dir, { recursive: true, force: true });

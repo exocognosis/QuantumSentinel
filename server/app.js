@@ -502,7 +502,7 @@ async function upsertFindingObservation(datastore, finding, job, {
   return { saved, created: false };
 }
 
-export async function persistProbeResult(datastore, job) {
+export async function persistProbeResult(datastore, job, { recordJob = true } = {}) {
   if (!datastore) {
     return {
       probeJobId: job?.id ?? null,
@@ -515,7 +515,7 @@ export async function persistProbeResult(datastore, job) {
     };
   }
 
-  await datastore.createProbeJob(job);
+  if (recordJob) await datastore.createProbeJob(job);
   const persistence = {
     probeJobId: job.id,
     evidenceCount: 0,
@@ -527,6 +527,40 @@ export async function persistProbeResult(datastore, job) {
   };
 
   if (job.status === "completed") {
+    if (["discovery", "device"].includes(job.mode)) {
+      const completedObservations = (job.result?.observations || []).filter(
+        (observation) => observation.status === "completed" && observation.reachability?.tcp,
+      );
+      for (const observation of completedObservations) {
+        const nested = await persistProbeResult(datastore, {
+          id: `${job.id}:${observation.host}:${observation.port}`,
+          mode: "tls",
+          status: "completed",
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+          completedAt: job.completedAt,
+          target: { host: observation.host, port: observation.port },
+          result: observation,
+          error: null,
+        }, { recordJob: false });
+        persistence.evidenceCount += nested.evidenceCount;
+        persistence.evidenceRefs.push(...nested.evidenceRefs);
+        persistence.findingIds.push(...nested.findingIds);
+        persistence.directFindingIds.push(...nested.directFindingIds);
+        persistence.riskFindingIds.push(...nested.riskFindingIds);
+      }
+      persistence.evidenceRefs = mergeUnique(
+        persistence.evidenceRefs,
+        [],
+        (ref) => `${ref.kind}:${ref.id ?? ref.hash}`,
+      );
+      persistence.findingIds = mergeUnique(persistence.findingIds, [], String);
+      persistence.directFindingIds = mergeUnique(persistence.directFindingIds, [], String);
+      persistence.riskFindingIds = mergeUnique(persistence.riskFindingIds, [], String);
+      persistence.findingCount = persistence.findingIds.length;
+      return persistence;
+    }
+
     let assetForAnalysis = job;
     let assetId = job.target?.assetId ?? null;
 
@@ -600,6 +634,34 @@ export async function persistProbeResult(datastore, job) {
 
   persistence.findingCount = persistence.findingIds.length;
   return persistence;
+}
+
+export async function backfillProbeAssets(datastore) {
+  if (!datastore) return { promoted: 0 };
+  const [jobs, assets] = await Promise.all([datastore.listProbeJobs(), datastore.listAssets()]);
+  const knownHosts = new Set(assets.map((asset) => asset.hostname).filter(Boolean));
+  let promoted = 0;
+
+  for (const job of jobs) {
+    if (job.status !== "completed" || !["discovery", "device"].includes(job.mode)) continue;
+    for (const observation of job.result?.observations || []) {
+      if (observation.status !== "completed" || !observation.reachability?.tcp || knownHosts.has(observation.host)) continue;
+      await persistProbeResult(datastore, {
+        id: `${job.id}:${observation.host}:${observation.port}`,
+        mode: "tls",
+        status: "completed",
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        completedAt: job.completedAt,
+        target: { host: observation.host, port: observation.port },
+        result: observation,
+        error: null,
+      }, { recordJob: false });
+      knownHosts.add(observation.host);
+      promoted += 1;
+    }
+  }
+  return { promoted };
 }
 
 async function analyzeAssetById(datastore, id) {

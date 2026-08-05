@@ -1,4 +1,4 @@
-import { createApiServer } from "./app.js";
+import { backfillProbeAssets, createApiServer } from "./app.js";
 import { createDatastore } from "./datastore.js";
 import { ASSETS } from "../src/mockData.js";
 
@@ -24,6 +24,7 @@ const datastore = await createDatastore({
   filePath: datastorePath,
   seedAssets: demoMode ? ASSETS : [],
 });
+await backfillProbeAssets(datastore);
 const server = createApiServer({
   datastore,
   schedulerOptions: {

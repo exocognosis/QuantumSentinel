@@ -543,6 +543,114 @@ function Panel({ title, children, badge, style={} }) {
   );
 }
 
+function QDayScoreMethodology() {
+  const severityWeights = [
+    ["Critical", "15", C.red],
+    ["High", "8", C.amber],
+    ["Medium", "4", C.tnfl],
+    ["Low", "2", C.accent],
+    ["Informational", "0", C.green],
+  ];
+  const confidenceWeights = [
+    ["Confirmed", "1.00×"],
+    ["High confidence", "0.90×"],
+    ["Candidate", "0.55×"],
+    ["Dependency reference", "0.40×"],
+    ["Documentation reference", "0.10×"],
+  ];
+  const grades = [
+    ["A", "90–100", C.green],
+    ["B", "75–89", C.accent],
+    ["C", "60–74", C.tnfl],
+    ["D", "40–59", C.amber],
+    ["F", "0–39", C.red],
+  ];
+
+  return (
+    <Panel title="How the Q-Day Readiness Score Is Calculated" badge="TRANSPARENT MODEL" style={{ gridColumn:"1/4" }}>
+      <div style={{ padding:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1.15fr 1fr 0.9fr", gap:16 }}>
+          <div>
+            <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em", marginBottom:8 }}>
+              FORMULA
+            </div>
+            <div style={{ padding:"14px 16px", background:C.bg, border:`1px solid ${C.border2}`,
+              borderRadius:7, color:C.text, lineHeight:1.8 }}>
+              <div style={{ color:C.accent, fontSize:12, fontWeight:900 }}>
+                Score = 100 − min(100, Σ algorithm penalties)
+              </div>
+              <div style={{ color:C.muted, fontSize:10, marginTop:6 }}>
+                Algorithm penalty = severity weight × strongest evidence confidence
+                <br/>+ min(8, 1.5 × log₂(reference count + 1))
+              </div>
+            </div>
+            <div style={{ marginTop:10, fontSize:10, lineHeight:1.6, color:C.muted }}>
+              Findings are grouped by detection rule before scoring. Repeated references increase the penalty
+              logarithmically, so one widely used algorithm matters more without allowing duplicate matches to
+              overwhelm the score.
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1.25fr", gap:10 }}>
+            <div>
+              <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em", marginBottom:8 }}>
+                SEVERITY BASE
+              </div>
+              {severityWeights.map(([label, value, color])=>(
+                <div key={label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                  padding:"5px 7px", borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:9, color }}>{label}</span>
+                  <span style={{ fontSize:10, color:C.text, fontWeight:900 }}>{value}</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em", marginBottom:8 }}>
+                CONFIDENCE MULTIPLIER
+              </div>
+              {confidenceWeights.map(([label, value])=>(
+                <div key={label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                  padding:"5px 7px", borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:9, color:C.muted }}>{label}</span>
+                  <span style={{ fontSize:10, color:C.text, fontWeight:900 }}>{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em", marginBottom:8 }}>
+              READINESS GRADE
+            </div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {grades.map(([grade, range, color])=>(
+                <div key={grade} style={{ minWidth:52, flex:1, padding:"8px 6px", textAlign:"center",
+                  background:`${color}11`, border:`1px solid ${color}44`, borderRadius:6 }}>
+                  <div style={{ fontSize:17, fontWeight:900, color }}>{grade}</div>
+                  <div style={{ fontSize:8, color:C.muted }}>{range}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop:12, padding:"9px 10px", background:`${C.green}0c`,
+              border:`1px solid ${C.green}33`, borderRadius:6, fontSize:9, color:C.muted, lineHeight:1.55 }}>
+              PQC and adequately parameterized symmetric/hash observations are informational and do not reduce
+              the score. They still require implementation, downgrade, and operational validation.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop:14, padding:"9px 12px", background:`${C.amber}0d`,
+          borderLeft:`3px solid ${C.amber}`, color:C.muted, fontSize:9, lineHeight:1.6 }}>
+          <span style={{ color:C.amber, fontWeight:900 }}>INTERPRETATION BOUNDARY — </span>
+          The Q-Day Readiness Score prioritizes repository migration work. It is not a certification, audit opinion,
+          proof that detected code is reachable, or guarantee of quantum safety. Runtime negotiation, deployed
+          infrastructure, hardware, third parties, and external trust paths require separate evidence.
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 // ── Countdown clock ───────────────────────────────────────────────
 function QDayClock() {
   const TARGET = new Date("2029-01-01T00:00:00Z");
@@ -1796,6 +1904,8 @@ export default function App() {
                 ))}
               </div>
             </Panel>
+
+            <QDayScoreMethodology />
 
             {/* Top Critical Findings */}
             <Panel title="Top Critical Findings" badge="REQUIRES ACTION" style={{ gridColumn:"1/3" }}>

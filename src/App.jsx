@@ -188,6 +188,14 @@ function readinessMeaning(score, criticalCount = 0) {
   return `${score} means quantum-ready evidence is strong. Keep rescans and CBOM updates active.`;
 }
 
+function observedPostureMeaning(score, criticalCount = 0) {
+  if (!Number.isFinite(score)) return "No posture score exists yet. Run an authorized scan to collect cryptographic evidence.";
+  if (criticalCount > 0) return `${score} reflects observed exposure in this scan. Start with ${criticalCount} priority finding${criticalCount === 1 ? "" : "s"}.`;
+  if (score < 50) return `${score} reflects limited or incomplete scan evidence. Add deeper inventory before closing risk.`;
+  if (score < 70) return `${score} reflects partial migration posture for this scan scope. Validate target state and evidence gaps next.`;
+  return `${score} reflects stronger observed cryptography for this scan scope. Keep rescans and CBOM updates active.`;
+}
+
 function evidenceNeededForAction(action) {
   const target = action?.target || "Target migration state";
   return `Owner approval, implementation record, updated CBOM, and rescan evidence for ${target}.`;
@@ -281,6 +289,42 @@ function PageTitle({ title, subtitle, children, className = "" }) {
         <p>{subtitle}</p>
       </div>
       {children && <div className="title-actions">{children}</div>}
+    </div>
+  );
+}
+
+function ScopePicker({ label, value, options, onChange, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(option => option.id === value) || options[0];
+  return (
+    <div className={`scope-picker ${className}`.trim()}>
+      <span>{label}</span>
+      <button
+        type="button"
+        className="scope-picker-button"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+      >
+        <b>{selected?.label || "Overall organization"}</b>
+        <ChevronDown />
+      </button>
+      {open && (
+        <div className="scope-picker-menu" role="menu">
+          {options.map(option => (
+            <button
+              type="button"
+              className={option.id === value ? "selected" : ""}
+              key={option.id}
+              onClick={() => {
+                onChange(option.id);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -535,7 +579,7 @@ function Onboarding({ profile, onSave, setActive, qdayScenario, scans }) {
         {[
           ["Organization profile", profileReady ? profile.name : "Name, industry, and geography are required.", profileReady],
           ["Q-Day horizon", horizon.label, Boolean(qdayScenario)],
-          ["First scan target", firstScanReady ? `${completedScanCount(scans)} completed scan${completedScanCount(scans) === 1 ? "" : "s"}` : "Run one scan after setup.", firstScanReady],
+          ["Completed scans", firstScanReady ? `${completedScanCount(scans)} completed scan${completedScanCount(scans) === 1 ? "" : "s"}` : "Run one scan after setup.", firstScanReady],
         ].map(([label, detail, done]) => (
           <div className={done ? "done" : ""} key={label}>
             <span>{done ? <Check /> : <Clock3 />}</span>
@@ -1052,13 +1096,19 @@ function CryptoInventory({ data, setActive, embedded = false }) {
   );
 }
 
-function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQdayScenario }) {
+function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQdayScenario, openResultsForScope, openPlanForScope }) {
   const [scoreScope, setScoreScope] = useState("organization");
   const assets = data?.assets || [];
   const completedScans = scans.filter(scan => scan.status === "COMPLETED" && scan.result);
   const profileComplete = isProfileComplete(profile);
   const workflow = workflowStatus({ profile, scores, scans, data });
   const NextIcon = workflow.next.icon;
+  const runWorkflowNext = () => {
+    const scope = scans[0]?.id || "organization";
+    if (workflow.next.route === ROUTES.results) openResultsForScope(scope);
+    else if (workflow.next.route === ROUTES.plan) openPlanForScope(scope);
+    else setActive(workflow.next.route);
+  };
   const selectedScan = completedScans.find(scan => scan.id === scoreScope) || null;
   const scopedHosts = new Set(selectedScan ? [
     selectedScan.target?.host,
@@ -1088,11 +1138,11 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
           <Building2 />
           Onboarding
         </button>
-        <button className="primary" onClick={() => setActive(workflow.next.route)}>
+        <button className="primary" onClick={runWorkflowNext}>
           <NextIcon />
           {workflow.next.cta}
         </button>
-        <button className="secondary" onClick={() => setActive(ROUTES.plan)}>
+        <button className="secondary" onClick={() => openPlanForScope(scoreScope)}>
           <FileText />
           View plan
         </button>
@@ -1139,14 +1189,16 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
                   : "Complete onboarding and collect evidence to establish your first readiness baseline."}
               </p>
               <p className="score-meaning">
-                {readinessMeaning(assessed ? readiness.score : null, critical)}
+                {selectedScan
+                  ? observedPostureMeaning(assessed ? readiness.score : null, critical)
+                  : readinessMeaning(assessed ? readiness.score : null, critical)}
               </p>
               {assessed && <span className="direction better">↑ {readiness.direction}</span>}
             </div>
           </div>
           <button
             className="text-link"
-            onClick={() => setActive(ROUTES.results)}
+            onClick={() => openResultsForScope(scoreScope)}
           >
             How this score works <ChevronRight />
           </button>
@@ -1219,7 +1271,7 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
             </span>
             <button
               className="text-link"
-              onClick={() => setActive(ROUTES.plan)}
+              onClick={() => openPlanForScope(scoreScope)}
             >
               View all <ChevronRight />
             </button>
@@ -1237,11 +1289,11 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
                 <Clock3 />
                 Review
               </span>
-              <button onClick={() => setActive(ROUTES.plan)}>Open plan</button>
+              <button onClick={() => openPlanForScope(scoreScope)}>Open plan</button>
             </div>
           )) : <p className="empty-scans">No priorities in this scope. Run an authorized scan to collect evidence.</p>}
         </article>
-        {scans.length > 0 && <button className="latest-scan" onClick={() => setActive(ROUTES.results)}>
+        {scans.length > 0 && <button className="latest-scan" onClick={() => openResultsForScope(scans[0]?.id || "organization")}>
           <Globe2 />
           <span>
             <small>Latest scan evidence</small>
@@ -1255,7 +1307,7 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
   );
 }
 
-function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "public" }) {
+function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope, initialMode = "public" }) {
   const [mode, setMode] = useState(initialMode);
   const [target, setTarget] = useState("");
   const [running, setRunning] = useState(false);
@@ -1263,6 +1315,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "publ
   const [completed, setCompleted] = useState(false);
   const [failed, setFailed] = useState(false);
   const [lastResult, setLastResult] = useState(null);
+  const [lastScanId, setLastScanId] = useState("");
   const [resultNote, setResultNote] = useState("");
   const [error, setError] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -1288,6 +1341,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "publ
     setCompleted(false);
     setFailed(false);
     setLastResult(null);
+    setLastScanId("");
     setProgress(0);
     setError("");
     setResultNote("");
@@ -1318,6 +1372,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "publ
     setCompleted(false);
     setFailed(false);
     setLastResult(null);
+    setLastScanId("");
     setRunning(true);
     setProgress(12);
     try {
@@ -1393,6 +1448,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "publ
           ? null
           : job.riskScore;
       setResultNote("Scan completed and evidence saved.");
+      setLastScanId(job.id);
       setLastResult({
         ...job.result,
         _riskScore: observedScore,
@@ -1987,17 +2043,16 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "publ
                 <p>No additional cryptographic findings were returned.</p>
               )}
               <div className="analysis-actions">
-                <button className="secondary" onClick={() => setActive(ROUTES.results)}>Open results <ChevronRight /></button>
+                <button className="secondary" onClick={() => openResultsForScope(lastScanId || "organization")}>Open results <ChevronRight /></button>
                 <button
                   className="secondary"
                   onClick={() => {
-                    setResultNote("CBOM evidence is ready. Open Results to save or export the scoped CBOM.");
+                    openResultsForScope(lastScanId || "organization");
                   }}
                 >
-                  Generate CBOM <ChevronRight />
+                  Open scoped CBOM <ChevronRight />
                 </button>
               </div>
-              {resultNote.includes("CBOM") && <p className="analysis-status">{resultNote}</p>}
             </div>
             <p className="analysis-boundary"><CircleHelp /><span><b>Interpretation boundary:</b> Endpoint evidence can identify exposed cryptography, but it cannot establish organization-wide Quantum Readiness without internal inventory, governance, and migration evidence.</span></p>
           </article>
@@ -3282,9 +3337,24 @@ function Reports({ scores, data, profile, qdayScenario, scans, embedded = false 
   );
 }
 
-function ResultsWorkspace({ data, scores, scans = [], setActive }) {
-  const [resultsScope, setResultsScope] = useState("organization");
+function ResultsWorkspace({ data, scores, scans = [], setActive, selectedScope = "organization", setSelectedScope, openPlanForScope }) {
+  const [resultsScope, setResultsScope] = useState(selectedScope || "organization");
   const scopeOptions = useMemo(() => completedScanScopes(scans), [scans]);
+  const resultScopeOptions = useMemo(() => [
+    { id: "organization", label: "Overall organization" },
+    ...scopeOptions,
+  ], [scopeOptions]);
+  useEffect(() => {
+    setResultsScope(selectedScope || "organization");
+  }, [selectedScope]);
+  const changeResultsScope = useCallback((scope) => {
+    setResultsScope(scope);
+    setSelectedScope?.(scope);
+  }, [setSelectedScope]);
+  const openScopedPlan = useCallback((scope) => {
+    if (openPlanForScope) openPlanForScope(scope);
+    else setActive(ROUTES.plan);
+  }, [openPlanForScope, setActive]);
   const resultsContext = useMemo(
     () => scopedPlanContext(data, scans, scores, resultsScope),
     [data, resultsScope, scans, scores],
@@ -3370,20 +3440,18 @@ function ResultsWorkspace({ data, scores, scans = [], setActive }) {
         subtitle={`${resultsContext.scopeLabel}: CBOM, findings, and readiness in one evidence view.`}
         className="results-page-title"
       >
-        <label className="results-scope-select">
-          Results for
-          <select value={resultsScope} onChange={event => setResultsScope(event.target.value)}>
-            <option value="organization">Overall organization</option>
-            {scopeOptions.map(scope => (
-              <option value={scope.id} key={scope.id}>{scope.label}</option>
-            ))}
-          </select>
-        </label>
+        <ScopePicker
+          label="Results for"
+          value={resultsScope}
+          options={resultScopeOptions}
+          onChange={changeResultsScope}
+          className="results-scope-picker"
+        />
         <button className="secondary" onClick={() => setActive(ROUTES.collect)}>
           <Target />
           Run another scan
         </button>
-        <button className="primary" onClick={() => setActive(ROUTES.plan)}>
+        <button className="primary" onClick={() => openScopedPlan(resultsScope)}>
           <Wrench />
           Open plan
         </button>
@@ -3393,7 +3461,11 @@ function ResultsWorkspace({ data, scores, scans = [], setActive }) {
           <div>
             <span className="eyebrow">{resultsContext.selectedScan ? "Observed crypto posture" : "Readiness result"}</span>
             <h2>{readiness.assessed ? `${readiness.score}/100 · ${readiness.classification}` : "Not yet assessed"}</h2>
-            <p>{readinessMeaning(readiness.assessed ? readiness.score : null, criticalAssets.length)}</p>
+            <p>
+              {resultsContext.selectedScan
+                ? observedPostureMeaning(readiness.assessed ? readiness.score : null, criticalAssets.length)
+                : readinessMeaning(readiness.assessed ? readiness.score : null, criticalAssets.length)}
+            </p>
           </div>
           <ScoreRing score={readiness.assessed ? readiness.score : null} label={resultsContext.selectedScan ? "Posture" : "Readiness"} />
           <div className="results-stat-grid">
@@ -3458,7 +3530,7 @@ function ResultsWorkspace({ data, scores, scans = [], setActive }) {
             ))}
             {!criticalAssets.length && <p className="empty-scans">No priority findings yet. Run an authorized scan to collect evidence.</p>}
           </div>
-          <button className="secondary" onClick={() => setActive(ROUTES.plan)}>
+          <button className="secondary" onClick={() => openScopedPlan(resultsScope)}>
             Open migration queue <ChevronRight />
           </button>
         </article>
@@ -3490,7 +3562,7 @@ function ResultsWorkspace({ data, scores, scans = [], setActive }) {
   );
 }
 
-function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
+function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedScope = "organization", setSelectedScope }) {
   const legacySeedIds = new Set(["rsa-gateway", "hybrid-vpn", "root-hierarchy"]);
   const [actions, setActions] = useState(() => {
     try {
@@ -3500,8 +3572,19 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
       return [];
     }
   });
-  const [planScope, setPlanScope] = useState("organization");
+  const [planScope, setPlanScope] = useState(selectedScope || "organization");
   const scopeOptions = useMemo(() => completedScanScopes(scans), [scans]);
+  const planScopeOptions = useMemo(() => [
+    { id: "organization", label: "Overall organization" },
+    ...scopeOptions,
+  ], [scopeOptions]);
+  useEffect(() => {
+    setPlanScope(selectedScope || "organization");
+  }, [selectedScope]);
+  const changePlanScope = useCallback((scope) => {
+    setPlanScope(scope);
+    setSelectedScope?.(scope);
+  }, [setSelectedScope]);
   const planContext = useMemo(
     () => scopedPlanContext(data, scans, scores, planScope),
     [data, planScope, scans, scores],
@@ -3590,15 +3673,13 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
         subtitle={`${planContext.scopeLabel}: prioritized migration path, owner queue, and export-ready plan.`}
         className="plan-page-title"
       >
-        <label className="plan-scope-select">
-          Plan for
-          <select value={planScope} onChange={event => setPlanScope(event.target.value)}>
-            <option value="organization">Overall organization</option>
-            {scopeOptions.map(scope => (
-              <option value={scope.id} key={scope.id}>{scope.label}</option>
-            ))}
-          </select>
-        </label>
+        <ScopePicker
+          label="Plan for"
+          value={planScope}
+          options={planScopeOptions}
+          onChange={changePlanScope}
+          className="plan-scope-picker"
+        />
         <button className="primary" onClick={() => setPlanOpen(true)}>
           <Wrench />
           Create action
@@ -3779,6 +3860,7 @@ export default function App() {
   const [profile, setProfile] = useState(savedProfile);
   const [qdayScenario, setQdayScenario] = useState(() => localStorage.getItem("quantumSentinel.qdayScenario") || "ionq");
   const [onboardingVisible, setOnboardingVisible] = useState(() => localStorage.getItem("quantumSentinel.onboardingVisible") === "true");
+  const [selectedScope, setSelectedScope] = useState("organization");
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem("quantumSentinel.theme");
     if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
@@ -3828,6 +3910,14 @@ export default function App() {
       JSON.stringify(next),
     );
   }, []);
+  const openResultsForScope = useCallback((scope = "organization") => {
+    setSelectedScope(scope || "organization");
+    setActive(ROUTES.results);
+  }, []);
+  const openPlanForScope = useCallback((scope = "organization") => {
+    setSelectedScope(scope || "organization");
+    setActive(ROUTES.plan);
+  }, []);
   const page = useMemo(() => {
     if (active === ROUTES.onboarding)
       return <Onboarding profile={profile} onSave={saveProfile} setActive={setActive} qdayScenario={qdayScenario} scans={scans} />;
@@ -3841,6 +3931,8 @@ export default function App() {
           profile={profile}
           qdayScenario={qdayScenario}
           setQdayScenario={setQdayScenario}
+          openResultsForScope={openResultsForScope}
+          openPlanForScope={openPlanForScope}
         />
       );
     if (active === ROUTES.learn) return <QuantumContext />;
@@ -3858,14 +3950,14 @@ export default function App() {
         />
       );
     if (active === ROUTES.collect)
-      return <Scan scans={scans} setScans={setScans} setActive={setActive} onEvidenceSaved={refreshEvidence} />;
-    if (active === ROUTES.results) return <ResultsWorkspace data={data} scores={scores} scans={scans} setActive={setActive} />;
+      return <Scan scans={scans} setScans={setScans} setActive={setActive} onEvidenceSaved={refreshEvidence} openResultsForScope={openResultsForScope} />;
+    if (active === ROUTES.results) return <ResultsWorkspace data={data} scores={scores} scans={scans} setActive={setActive} selectedScope={selectedScope} setSelectedScope={setSelectedScope} openPlanForScope={openPlanForScope} />;
     if (active === ROUTES.inventory || active === ROUTES.findings || active === ROUTES.readiness)
-      return <ResultsWorkspace data={data} scores={scores} scans={scans} setActive={setActive} />;
+      return <ResultsWorkspace data={data} scores={scores} scans={scans} setActive={setActive} selectedScope={selectedScope} setSelectedScope={setSelectedScope} openPlanForScope={openPlanForScope} />;
     if (active === ROUTES.plan || active === ROUTES.exports)
-      return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} />;
-    return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} />;
-  }, [active, data, profile, qdayScenario, saveProfile, scores, scans, refreshEvidence, theme, onboardingVisible]);
+      return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} selectedScope={selectedScope} setSelectedScope={setSelectedScope} />;
+    return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} selectedScope={selectedScope} setSelectedScope={setSelectedScope} />;
+  }, [active, data, profile, qdayScenario, saveProfile, scores, scans, refreshEvidence, theme, onboardingVisible, selectedScope, openResultsForScope, openPlanForScope]);
   return (
     <div className="app">
       <Header

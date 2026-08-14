@@ -4,6 +4,8 @@ An evidence-backed post-quantum cryptography readiness dashboard and assessment 
 
 ## Install and launch
 
+Use the one-command installer for the normal first-run path:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/exocognosis/QuantumSentinel/main/install.sh | sh
 ```
@@ -11,6 +13,8 @@ curl -fsSL https://raw.githubusercontent.com/exocognosis/QuantumSentinel/main/in
 That single command downloads Quantum Sentinel into `./QuantumSentinel`, installs its dependencies, builds it, starts the API and dashboard, and opens the verified local dashboard URL. It starts at `http://127.0.0.1:5173` and automatically selects the next available port when another application is already using it. Press `Ctrl+C` to stop it. Run the same command later to update and relaunch it safely.
 
 Requirements: Git and Node.js 20.19 or newer. To choose a different installation location, set `QS_INSTALL_DIR` before the command.
+
+Use GitHub **Download ZIP** only when you want to inspect the source without running the installer. If you choose the ZIP path, unzip it, open a terminal in the extracted folder, run `npm ci`, run `npm run build`, and then run `npm start`.
 
 ## Q-Day Repository Scanner
 

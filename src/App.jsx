@@ -3373,7 +3373,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
         <article className="card plan-briefs">
           <div className="card-heading">
             <span><FileText />Briefs and decisions</span>
-            <small>{scores.confidence.level} evidence confidence</small>
+            <small>{scores.confidence.label}</small>
           </div>
           <div className="decision-list compact">
             {brief.decisionRequired.map(item => (

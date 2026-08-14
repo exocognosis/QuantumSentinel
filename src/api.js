@@ -8,6 +8,7 @@ const ENDPOINTS = {
 };
 
 const CBOM_ENDPOINT = "/api/cbom";
+const CBOM_SNAPSHOTS_ENDPOINT = "/api/cbom/snapshots";
 
 function average(items, field) {
   if (!items.length) return 0;
@@ -167,6 +168,66 @@ export function getCbomUrl(baseUrl = "") {
   return withBaseUrl(CBOM_ENDPOINT, baseUrl);
 }
 
+export async function loadCbom(options = {}) {
+  const fetcher = options.fetcher ?? globalThis.fetch;
+  const baseUrl = options.baseUrl ?? "";
+
+  if (typeof fetcher !== "function") {
+    return { data: [], count: 0, summary: {} };
+  }
+
+  try {
+    return fetchJson(fetcher, CBOM_ENDPOINT, baseUrl);
+  } catch {
+    return { data: [], count: 0, summary: {} };
+  }
+}
+
+export async function loadCbomSnapshots(options = {}) {
+  const fetcher = options.fetcher ?? globalThis.fetch;
+  const baseUrl = options.baseUrl ?? "";
+
+  if (typeof fetcher !== "function") {
+    return [];
+  }
+
+  try {
+    const payload = await fetchJson(fetcher, CBOM_SNAPSHOTS_ENDPOINT, baseUrl);
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.items)) return payload.items;
+  } catch {
+    return [];
+  }
+
+  return [];
+}
+
+export async function createCbomSnapshot(snapshot = {}, options = {}) {
+  const fetcher = options.fetcher ?? globalThis.fetch;
+  const baseUrl = options.baseUrl ?? "";
+
+  if (typeof fetcher !== "function") {
+    return null;
+  }
+
+  const response = await fetcher(withBaseUrl(CBOM_SNAPSHOTS_ENDPOINT, baseUrl), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(snapshot),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed for ${CBOM_SNAPSHOTS_ENDPOINT}: ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload?.data ?? payload;
+}
+
 export function downloadCbom(filename = "quantumsentinel-cbom.json", options = {}) {
   const url = getCbomUrl(options.baseUrl ?? "");
 
@@ -185,7 +246,10 @@ export function downloadCbom(filename = "quantumsentinel-cbom.json", options = {
 }
 
 export default {
+  createCbomSnapshot,
+  loadCbom,
   loadApplianceData,
+  loadCbomSnapshots,
   getCbomUrl,
   downloadCbom,
 };

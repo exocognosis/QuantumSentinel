@@ -45,7 +45,7 @@ Public-sector or critical-infrastructure comparisons should be based on authoriz
 
 ## Product State
 
-QuantumSentinel currently runs as a local React dashboard backed by a Node API and persistent local datastore. It is suitable for MVP demos, local assessment workflows, and API/client development. It is not yet a production appliance.
+QuantumSentinel runs as a local React dashboard backed by a Node API and persistent local datastore. It supports local assessment workflows, MVP demos, and API/client development. Treat scan output as assessment evidence, not as a certified compliance attestation.
 
 Implemented capabilities:
 

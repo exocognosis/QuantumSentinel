@@ -296,6 +296,14 @@ function PageTitle({ title, subtitle, children, className = "" }) {
 function ScopePicker({ label, value, options, onChange, className = "" }) {
   const [open, setOpen] = useState(false);
   const selected = options.find(option => option.id === value) || options[0];
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
   return (
     <div className={`scope-picker ${className}`.trim()}>
       <span>{label}</span>
@@ -1307,7 +1315,7 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
   );
 }
 
-function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope, initialMode = "public" }) {
+function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope, initialMode = "device" }) {
   const [mode, setMode] = useState(initialMode);
   const [target, setTarget] = useState("");
   const [running, setRunning] = useState(false);
@@ -3623,6 +3631,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
   const [planName, setPlanName] = useState("Critical systems migration");
   const [planOwner, setPlanOwner] = useState("");
   const [planDeadline, setPlanDeadline] = useState("2026-12-31");
+  const [planOwnerError, setPlanOwnerError] = useState("");
   const statusOrder = { Blocked: 0, "In progress": 1, Planned: 2, Completed: 3 };
   const persistedActions = actions.filter((action) => {
     if (planScope === "organization") return !action.scopeId || action.scopeId === "organization";
@@ -3646,14 +3655,33 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
     localStorage.setItem("quantumsentinel-remediation-actions", JSON.stringify(actions));
   }, [actions]);
 
+  useEffect(() => {
+    if (!planOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setPlanOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [planOpen]);
+
+  const closePlanBuilder = () => {
+    setPlanOpen(false);
+    setPlanOwnerError("");
+  };
+
   const createPlan = (event) => {
     event.preventDefault();
+    const owner = planOwner.trim();
+    if (!owner) {
+      setPlanOwnerError("Owner is required.");
+      return;
+    }
     const newAction = {
       id: `plan-${Date.now()}`,
       title: planName.trim(),
       asset: planContext.scopeLabel,
       scopeId: planScope,
-      owner: planOwner.trim() || "Unassigned",
+      owner,
       due: planDeadline,
       status: "Planned",
       scanType: planContext.selectedScan ? scanTypeLabel(planContext.selectedScan) : "Manual plan",
@@ -3662,7 +3690,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
       evidenceNeeded: "Approved scope, pilot result, updated CBOM, and validation scan.",
     };
     setActions(current => [newAction, ...current]);
-    setPlanOpen(false);
+    closePlanBuilder();
     setSelectedAction(newAction);
   };
 
@@ -3684,9 +3712,9 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
           <Wrench />
           Create action
         </button>
-        <button className="secondary" onClick={() => downloadReportPdf(primaryReport)}>
+        <button className="secondary plan-download-button" onClick={() => downloadReportPdf(primaryReport)} aria-label="Download PQC migration plan">
           <FileDown />
-          Download PQC migration plan
+          Download plan
         </button>
       </PageTitle>
       <section className="plan-layout">
@@ -3783,7 +3811,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
           </div>
         </article>
       </section>
-      {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New action</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={() => setPlanOpen(false)} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input value={planOwner} onChange={event => setPlanOwner(event.target.value)} placeholder="Name or team" /></label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={() => setPlanOpen(false)}>Cancel</button><button type="submit" className="primary"><Check />Add to queue</button></div></form></div>}
+      {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New action</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={closePlanBuilder} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input required value={planOwner} onChange={event => { setPlanOwner(event.target.value); if (planOwnerError) setPlanOwnerError(""); }} placeholder="Name or team" aria-invalid={planOwnerError ? "true" : "false"} />{planOwnerError && <small className="field-error">{planOwnerError}</small>}</label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={closePlanBuilder}>Cancel</button><button type="submit" className="primary" disabled={!planName.trim() || !planOwner.trim() || !planDeadline}><Check />Add to queue</button></div></form></div>}
       {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Migration action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close migration action details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download action PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div><div><dt>Evidence needed</dt><dd>{selectedAction.evidenceNeeded || evidenceNeededForAction(selectedAction)}</dd></div></dl><p><b>Planning boundary:</b> Completion requires implementation evidence, validation evidence, updated CBOM evidence, and a rescan.</p></aside>}
       {selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Export package</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="report-context-note drawer-note"><b>This export includes</b><span>Organization profile, selected scope, scan evidence, CBOM, readiness score, priority findings, migration path, timeline, owners, decisions, and evidence boundary.</span></div><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><h3>Decision state</h3><div className="drawer-brief"><b>{selectedReport.brief.briefStatus}</b><p>{selectedReport.brief.nextAction}</p></div><h3>Report sections</h3><div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}
     </>

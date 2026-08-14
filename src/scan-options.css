@@ -375,6 +375,8 @@ html[data-theme="dark"] .results-boundary{background:#0e1929}
 @media(max-width:760px){.results-stat-grid,.compact-list>div,.finding-list>div,.compact-driver{grid-template-columns:1fr}.results-actions{flex-direction:column}.results-actions button{width:100%}.compact-driver b,.compact-driver small{text-align:left}}
 
 .plan-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;align-items:start}
+.plan-scope-select{min-width:260px;color:var(--muted);font-size:12px;font-weight:600}
+.plan-scope-select select{height:46px;margin-top:0;color:var(--text);font-weight:600}
 .plan-program{grid-column:1/-1;display:grid;grid-template-columns:1fr auto 1.25fr;gap:24px;align-items:center;padding:26px}
 .plan-program-copy h2{margin:6px 0 7px;color:var(--navy);font-size:28px}
 .plan-program-copy p{margin:0;max-width:620px;color:var(--muted);font-size:15px;line-height:1.5}

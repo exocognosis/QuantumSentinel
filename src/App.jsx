@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   createCbomSnapshot,
+  deriveSummary,
   downloadCbom,
   loadApplianceData,
   loadCbom,
@@ -623,7 +624,138 @@ function deriveObservedCryptoPosture(assets = []) {
     components.compensatingControls * .10
   );
   const classification = score >= 85 ? "Strong observed posture" : score >= 70 ? "Moderate observed posture" : score >= 50 ? "Transitional posture" : score >= 25 ? "Elevated exposure" : "High exposure";
-  return { readiness: { assessed: assets.length > 0, score, classification, direction: "Higher is better", components } };
+  const coverage = Math.round(components.inventoryCoverage);
+  const confidence = !assets.length || assets.length < 10 || coverage < 90 ? "Low" : "Medium";
+  return {
+    readiness: { assessed: assets.length > 0, score, classification, direction: "Higher is better", components },
+    confidence: { level: confidence, coverage, label: `${confidence} evidence confidence` },
+  };
+}
+
+function scanTypeLabel(scan = {}) {
+  if (scan.type === "tls") return "Website";
+  if (scan.type === "device") return "This device";
+  if (scan.type === "discovery") return "Authorized network";
+  return "Imported evidence";
+}
+
+function completedScanScopes(scans = []) {
+  return scans
+    .filter(scan => scan.status === "COMPLETED" && scan.result)
+    .map(scan => ({
+      id: scan.id,
+      label: `${scanTypeLabel(scan)} · ${scan.targetLabel || scan.target?.host || scan.id}`,
+    }));
+}
+
+function scanHostValues(scan = {}) {
+  const result = scan.result || {};
+  const request = scan.request || {};
+  const target = scan.target || {};
+  const observations = Array.isArray(result.observations) ? result.observations : [];
+  const values = [
+    scan.targetLabel,
+    request.host,
+    request.hostname,
+    target.host,
+    target.hostname,
+    ...(Array.isArray(request.hosts) ? request.hosts : []),
+    ...(Array.isArray(target.hosts) ? target.hosts : []),
+    ...observations.flatMap(observation => [
+      observation.host,
+      observation.hostname,
+      observation.ip,
+      observation.certificate?.subject,
+    ]),
+  ];
+  return new Set(values
+    .filter(Boolean)
+    .flatMap(value => String(value).split(","))
+    .map(value => value.trim().replace(/:\d+$/, ""))
+    .filter(Boolean));
+}
+
+function classifyObservationAsset(observation = {}) {
+  const classification = observation.classification || {};
+  const protocol = observation.protocol || {};
+  const certificate = observation.certificate || {};
+  const label = classification.label || classification.classification || "UNKNOWN";
+  const risk = label === "DEPRECATED" ? 92 : label === "SHOR-CRITICAL" ? 78 : label === "HYBRID" ? 20 : label === "QUANTUM-SAFE" ? 5 : 50;
+  return {
+    algo: certificate.algorithm || observation.algorithm || "Unknown",
+    proto: protocol.name || observation.protocolName || observation.protocol || "Unknown",
+    cls: label,
+    prio: classification.priority || (risk >= 90 ? "CRITICAL" : risk >= 70 ? "HIGH" : "MONITOR"),
+    pfs: Boolean(protocol.perfectForwardSecrecy),
+    cert_exp: certificate.expiresAt || "N/A",
+    hndl: classification.quantumVulnerable ? 70 : 5,
+    tnfl: classification.quantumVulnerable ? 60 : 5,
+    risk,
+    migration: ["HYBRID", "QUANTUM-SAFE"].includes(label) ? "Monitor and preserve evidence" : "Define a hybrid or PQC target state",
+  };
+}
+
+function observationAssetsForScan(scan = {}, existingAssets = []) {
+  const result = scan.result || {};
+  const observations = Array.isArray(result.observations) ? result.observations : [];
+  const existingHosts = new Set(existingAssets.map(asset => asset.hostname || asset.name).filter(Boolean));
+  return observations
+    .map((observation, index) => {
+      const host = observation.host || observation.hostname || scan.target?.host || scan.request?.host || scan.targetLabel || `scan-target-${index + 1}`;
+      const hostname = String(host).replace(/:\d+$/, "");
+      if (existingHosts.has(hostname)) return null;
+      return {
+        id: `scan-${scan.id}-${index + 1}`,
+        hostname,
+        ip: observation.ip || "",
+        type: scanTypeLabel(scan),
+        segment: scan.type === "device" ? "Local device" : scan.type === "discovery" ? "Authorized network" : "Public edge",
+        complexity: "UNKNOWN",
+        ...classifyObservationAsset(observation),
+      };
+    })
+    .filter(Boolean);
+}
+
+function scopedPlanContext(data = {}, scans = [], scores, selectedScope = "organization") {
+  const assets = Array.isArray(data?.assets) ? data.assets : [];
+  const findings = Array.isArray(data?.findings) ? data.findings : [];
+  const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+  const compliance = Array.isArray(data?.compliance) ? data.compliance : [];
+  const selectedScan = scans.find(scan => scan.id === selectedScope) || null;
+  if (!selectedScan) {
+    return {
+      scopeLabel: "Overall organization",
+      selectedScan: null,
+      data,
+      scores,
+      scans,
+    };
+  }
+  const hosts = scanHostValues(selectedScan);
+  const matchedAssets = assets.filter(asset => hosts.has(asset.hostname) || hosts.has(asset.name) || hosts.has(String(asset.ip || "")));
+  const scopedAssets = [...matchedAssets, ...observationAssetsForScan(selectedScan, matchedAssets)];
+  const scopedIds = new Set(scopedAssets.map(asset => String(asset.id)));
+  const scopedHosts = new Set(scopedAssets.map(asset => asset.hostname || asset.name).filter(Boolean));
+  const scopedFindings = findings.filter(finding => scopedIds.has(String(finding.assetId)) || scopedHosts.has(finding.assetName) || scopedHosts.has(finding.hostname) || scopedHosts.has(finding.host));
+  const scopedAlerts = alerts.filter(alert => scopedIds.has(String(alert.assetId)) || scopedHosts.has(alert.assetName) || scopedHosts.has(alert.hostname) || scopedHosts.has(alert.host));
+  const scopedScores = deriveObservedCryptoPosture(scopedAssets);
+  const scopedData = {
+    ...data,
+    assets: scopedAssets,
+    findings: scopedFindings,
+    alerts: scopedAlerts,
+    compliance,
+    summary: deriveSummary(scopedAssets, scopedAlerts, compliance),
+    isFallback: data?.isFallback,
+  };
+  return {
+    scopeLabel: `${scanTypeLabel(selectedScan)} · ${selectedScan.targetLabel || selectedScan.target?.host || selectedScan.id}`,
+    selectedScan,
+    data: scopedData,
+    scores: scopedScores,
+    scans: [selectedScan],
+  };
 }
 
 const QUANTUM_CONTEXT = [
@@ -2814,7 +2946,7 @@ function buildReportRecord(type, scores, data, profile = {}, qdayScenario = "ion
   ];
   const readinessSections = [
     { title: "Quantum Readiness Score", body: `The current score for ${brief.organizationName} is ${metrics.readinessScore}/100 (${metrics.readinessClassification}). The score is interpreted against the selected ${brief.qdayHorizon.label} scenario, which has ${brief.qdayHorizon.display} remaining.`, bullets: ["0-24: unprepared; 25-49: early-stage; 50-69: transitioning.", "70-84: prepared; 85-100: quantum-ready.", `${metrics.evidenceConfidence} evidence confidence means the score should be interpreted with the documented collection boundary.`] },
-    { title: "Weighted score components", body: "Each component contributes a defined share of the single readiness score. Improving a weak component raises readiness only when supporting evidence is collected.", bullets: Object.entries(scores.components || {}).map(([key, value]) => `${key.replace(/([A-Z])/g, " $1")}: ${Math.round(value)} evidence points.`) },
+    { title: "Weighted score components", body: "Each component contributes a defined share of the single readiness score. Improving a weak component raises readiness only when supporting evidence is collected.", bullets: Object.entries(scores.readiness?.components || {}).map(([key, value]) => `${key.replace(/([A-Z])/g, " $1")}: ${Math.round(value)} evidence points.`) },
     { title: "Evidence confidence", body: `${metrics.evidenceCoveragePct}% field coverage describes completeness of the fields currently measured, not completeness of the entire environment. Confidence must also reflect source quality, scan scope, and the age of evidence.`, bullets: ["Public TLS evidence covers one presented endpoint.", "Device and network evidence covers only authorized and reachable scope.", "Governance and migration assertions require documentary and implementation evidence."] },
     { title: "Readiness timeline", body: `${brief.organizationName} should set an internal readiness checkpoint by ${brief.qdayHorizon.readinessDeadline}. This date precedes the selected ${brief.qdayHorizon.label} horizon and creates time for validation, exceptions, and rescan evidence.`, bullets: ["Set a complete inventory baseline first.", "Pilot priority protocols and trust chains next.", "Finish critical-system cutover, rescan, and evidence review before declaring readiness."] },
   ];
@@ -3210,7 +3342,7 @@ function ResultsWorkspace({ data, scores, setActive }) {
         <article className="card results-drivers">
           <div className="card-heading">
             <span><ShieldCheck />Score drivers</span>
-            <small>{scores.confidence.label} confidence</small>
+            <small>{scores.confidence.label}</small>
           </div>
           {drivers.map(([label, value, weight]) => (
             <div className="compact-driver" key={label}>
@@ -3244,26 +3376,30 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
       return [];
     }
   });
-  const evidenceActions = useMemo(() => (data?.assets || [])
+  const [planScope, setPlanScope] = useState("organization");
+  const scopeOptions = useMemo(() => completedScanScopes(scans), [scans]);
+  const planContext = useMemo(
+    () => scopedPlanContext(data, scans, scores, planScope),
+    [data, planScope, scans, scores],
+  );
+  const scopedAssetNames = useMemo(() => new Set((planContext.data?.assets || [])
+    .map(asset => asset.hostname || asset.name || String(asset.id))
+    .filter(Boolean)), [planContext.data]);
+  const evidenceActions = useMemo(() => (planContext.data?.assets || [])
     .filter((asset) => !["HYBRID", "QUANTUM-SAFE"].includes(asset.cls))
     .map((asset) => {
       const assetName = asset.hostname || asset.name || String(asset.id);
-      const sourceScan = scans.find((scan) => {
+      const sourceScan = planContext.scans.find((scan) => {
         const directHost = scan.target?.host ?? scan.request?.host;
         const observations = scan.result?.observations || [];
         return directHost === assetName || observations.some((observation) => observation.host === assetName);
       });
-      const scanType = sourceScan?.type === "device"
-        ? "This device"
-        : sourceScan?.type === "discovery"
-          ? "Authorized network"
-          : sourceScan?.type === "tls"
-            ? "Website"
-            : "Imported evidence";
+      const scanType = sourceScan ? scanTypeLabel(sourceScan) : "Imported evidence";
       return {
         id: `evidence-${asset.id}`,
         title: `Modernize ${assetName}`,
         asset: assetName,
+        scopeId: planScope,
         scanType,
         owner: "Unassigned",
         due: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
@@ -3272,7 +3408,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
         target: asset.migration || "Define a hybrid or post-quantum target state",
         evidenceNeeded: "Owner approval, implementation record, updated CBOM, and post-change scan evidence.",
       };
-    }), [data, scans]);
+    }), [planContext.data, planContext.scans, planScope]);
   const [sortBy, setSortBy] = useState("urgency");
   const [planOpen, setPlanOpen] = useState(false);
   const [selectedAction, setSelectedAction] = useState(null);
@@ -3281,7 +3417,11 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
   const [planOwner, setPlanOwner] = useState("");
   const [planDeadline, setPlanDeadline] = useState("2026-12-31");
   const statusOrder = { Blocked: 0, "In progress": 1, Planned: 2, Completed: 3 };
-  const allActions = [...actions, ...evidenceActions.filter((item) => !actions.some((action) => action.asset === item.asset))];
+  const persistedActions = actions.filter((action) => {
+    if (planScope === "organization") return !action.scopeId || action.scopeId === "organization";
+    return action.scopeId === planScope || scopedAssetNames.has(action.asset);
+  });
+  const allActions = [...persistedActions, ...evidenceActions.filter((item) => !persistedActions.some((action) => action.asset === item.asset))];
   const sortedActions = [...allActions].sort((a, b) => {
     if (sortBy === "due") return a.due.localeCompare(b.due);
     if (sortBy === "status") return (statusOrder[a.status] ?? 4) - (statusOrder[b.status] ?? 4);
@@ -3291,9 +3431,9 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
   const openCount = allActions.filter(action => action.status !== "Completed").length;
   const progressCount = allActions.filter(action => action.status === "In progress").length;
   const completedCount = allActions.filter(action => action.status === "Completed").length;
-  const brief = deriveMigrationBrief(scores, data, profile, qdayScenario, scans);
-  const primaryReport = buildReportRecord(REPORT_TYPES[3], scores, data, profile, qdayScenario, scans);
-  const openReport = type => setSelectedReport(buildReportRecord(type, scores, data, profile, qdayScenario, scans));
+  const brief = deriveMigrationBrief(planContext.scores, planContext.data, profile, qdayScenario, planContext.scans);
+  const primaryReport = buildReportRecord(REPORT_TYPES[3], planContext.scores, planContext.data, profile, qdayScenario, planContext.scans);
+  const openReport = type => setSelectedReport(buildReportRecord(type, planContext.scores, planContext.data, profile, qdayScenario, planContext.scans));
 
   useEffect(() => {
     localStorage.setItem("quantumsentinel-remediation-actions", JSON.stringify(actions));
@@ -3304,11 +3444,12 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
     const newAction = {
       id: `plan-${Date.now()}`,
       title: planName.trim(),
-      asset: "Organization-wide",
+      asset: planContext.scopeLabel,
+      scopeId: planScope,
       owner: planOwner.trim() || "Unassigned",
       due: planDeadline,
       status: "Planned",
-      scanType: "Manual plan",
+      scanType: planContext.selectedScan ? scanTypeLabel(planContext.selectedScan) : "Manual plan",
       urgency: 75,
       target: "Inventory, pilot, and migrate priority cryptography",
       evidenceNeeded: "Approved scope, pilot result, updated CBOM, and validation scan.",
@@ -3322,8 +3463,17 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
     <>
       <PageTitle
         title="Plan"
-        subtitle="Prioritized migration path, owner queue, and export-ready plan."
+        subtitle={`${planContext.scopeLabel}: prioritized migration path, owner queue, and export-ready plan.`}
       >
+        <label className="plan-scope-select">
+          Plan scope
+          <select value={planScope} onChange={event => setPlanScope(event.target.value)}>
+            <option value="organization">Overall organization</option>
+            {scopeOptions.map(scope => (
+              <option value={scope.id} key={scope.id}>{scope.label}</option>
+            ))}
+          </select>
+        </label>
         <button className="primary" onClick={() => setPlanOpen(true)}>
           <Wrench />
           Create action
@@ -3373,7 +3523,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
         <article className="card plan-briefs">
           <div className="card-heading">
             <span><FileText />Briefs and decisions</span>
-            <small>{scores.confidence.label}</small>
+            <small>{planContext.scores.confidence.label}</small>
           </div>
           <div className="decision-list compact">
             {brief.decisionRequired.map(item => (

@@ -28,20 +28,40 @@ import {
   Target,
   Wrench,
 } from "lucide-react";
-import { loadApplianceData } from "./api.js";
+import {
+  createCbomSnapshot,
+  downloadCbom,
+  loadApplianceData,
+  loadCbom,
+  loadCbomSnapshots,
+} from "./api.js";
 import { buildRescanRequest, createProbeJob, loadProbeJobs } from "./probeApi.js";
 import { deriveQuantumScores } from "./quantumScores.js";
 import "./dashboard.css";
 import "./scan-options.css";
 
+const ROUTES = {
+  overview: "overview",
+  onboarding: "onboarding",
+  collect: "collect",
+  results: "results",
+  plan: "plan",
+  learn: "learn",
+  settings: "settings",
+  inventory: "inventory",
+  findings: "findings",
+  readiness: "readiness",
+  exports: "exports",
+};
+
 const NAV = [
-  ["Overview", BarChart3],
-  ["Quantum Context", CircleHelp],
-  ["Q-Day Readiness", ShieldCheck],
-  ["Scan", Target],
-  ["Exposure", ShieldAlert],
-  ["Remediation", Wrench],
-  ["Reports", FileText],
+  { id: ROUTES.onboarding, label: "Onboarding", icon: Building2 },
+  { id: ROUTES.overview, label: "Overview", icon: BarChart3 },
+  { id: ROUTES.collect, label: "Scan", icon: Target },
+  { id: ROUTES.results, label: "Results", icon: ShieldCheck },
+  { id: ROUTES.plan, label: "Plan", icon: Wrench },
+  { id: ROUTES.learn, label: "Learn", icon: CircleHelp },
+  { id: ROUTES.settings, label: "Settings", icon: Settings2 },
 ];
 
 const FALLBACK_SCANS = [];
@@ -81,6 +101,95 @@ function savedProfile() {
   } catch {
     return EMPTY_PROFILE;
   }
+}
+
+function isProfileComplete(profile) {
+  return Boolean(profile?.name && profile?.industry && profile?.geography);
+}
+
+function completedScanCount(scans = []) {
+  return scans.filter(scan => scan.status === "COMPLETED" && scan.result).length;
+}
+
+function workflowStatus({ profile, scores, scans = [], data = {} }) {
+  const assets = Array.isArray(data?.assets) ? data.assets : [];
+  const cbom = localCbomFromAssets(assets);
+  const setupDone = isProfileComplete(profile);
+  const scanDone = completedScanCount(scans) > 0;
+  const cbomDone = scanDone && cbom.count > 0;
+  const scoreDone = Boolean(scores?.readiness?.assessed);
+  const planDone = cbomDone && scoreDone;
+  const steps = [
+    {
+      id: "setup",
+      label: "Setup",
+      done: setupDone,
+      route: ROUTES.onboarding,
+      cta: "Complete setup",
+      icon: Building2,
+      detail: setupDone ? profile.name : "Organization profile required",
+    },
+    {
+      id: "scan",
+      label: "Scan",
+      done: scanDone,
+      route: ROUTES.collect,
+      cta: "Run first scan",
+      icon: Target,
+      detail: scanDone ? `${completedScanCount(scans)} scan${completedScanCount(scans) === 1 ? "" : "s"} saved` : "Collect first evidence",
+    },
+    {
+      id: "cbom",
+      label: "CBOM",
+      done: cbomDone,
+      route: ROUTES.results,
+      cta: "Generate CBOM",
+      icon: KeyRound,
+      detail: cbomDone ? `${cbom.count} component${cbom.count === 1 ? "" : "s"}` : "Build from scan evidence",
+    },
+    {
+      id: "score",
+      label: "Score",
+      done: scoreDone,
+      route: ROUTES.results,
+      cta: "Review score",
+      icon: ShieldCheck,
+      detail: scoreDone ? `${scores.readiness.score}/100` : "Needs evidence",
+    },
+    {
+      id: "plan",
+      label: "Plan",
+      done: planDone,
+      route: ROUTES.plan,
+      cta: "Review migration plan",
+      icon: Wrench,
+      detail: planDone ? "Pathway ready" : "Needs CBOM and score",
+    },
+    {
+      id: "report",
+      label: "Report",
+      done: false,
+      route: ROUTES.plan,
+      cta: "Download PQC migration plan",
+      icon: FileDown,
+      detail: planDone ? "Ready to export" : "Wait for plan",
+    },
+  ];
+  const next = steps.find(step => !step.done) || steps[steps.length - 1];
+  return { steps, next, cbom };
+}
+
+function readinessMeaning(score, criticalCount = 0) {
+  if (!Number.isFinite(score)) return "No score exists yet. Run a scan to collect cryptographic evidence.";
+  if (score < 50) return `${score} means early-stage readiness. Start with ${criticalCount} critical exposure${criticalCount === 1 ? "" : "s"}.`;
+  if (score < 70) return `${score} means transition work is underway. Close owner, target state, and validation gaps next.`;
+  if (score < 85) return `${score} means the program is prepared. Verify critical-system evidence and exceptions.`;
+  return `${score} means quantum-ready evidence is strong. Keep rescans and CBOM updates active.`;
+}
+
+function evidenceNeededForAction(action) {
+  const target = action?.target || "Target migration state";
+  return `Owner approval, implementation record, updated CBOM, and rescan evidence for ${target}.`;
 }
 
 function daysUntil(date) {
@@ -127,16 +236,17 @@ function Brand() {
   );
 }
 
-function Header({ active, setActive, theme, toggleTheme }) {
+function Header({ active, setActive, theme, toggleTheme, profileComplete, onboardingVisible }) {
+  const visibleNav = NAV.filter((item) => item.id !== ROUTES.onboarding || !profileComplete || onboardingVisible || active === ROUTES.onboarding);
   return (
     <header className="app-header">
       <Brand />
       <nav aria-label="Primary navigation">
-        {NAV.map(([label, Icon]) => (
+        {visibleNav.map(({ id, label, icon: Icon }) => (
           <button
-            key={label}
-            className={active === label ? "active" : ""}
-            onClick={() => setActive(label)}
+            key={id}
+            className={active === id ? "active" : ""}
+            onClick={() => setActive(id)}
           >
             <Icon />
             {label}
@@ -242,7 +352,7 @@ const REGULATORY_REGIMES = {
   },
 };
 
-function OrganizationProfile({ initialProfile, onSave, onClose }) {
+function OrganizationProfile({ initialProfile, onSave, onClose, variant = "panel" }) {
   const [profile, setProfile] = useState(initialProfile);
   const regimes = [
     ...(REGULATORY_REGIMES[profile.geography]?.default || []),
@@ -266,7 +376,7 @@ function OrganizationProfile({ initialProfile, onSave, onClose }) {
         : [...profile.dataAssets, asset],
     );
   return (
-    <aside className="onboarding-panel" aria-labelledby="profile-title">
+    <aside className={`onboarding-panel ${variant}`} aria-labelledby="profile-title">
       <div className="onboarding-heading">
         <div>
           <span className="eyebrow">Organization onboarding</span>
@@ -399,6 +509,47 @@ function OrganizationProfile({ initialProfile, onSave, onClose }) {
   );
 }
 
+function Onboarding({ profile, onSave, setActive, qdayScenario, scans }) {
+  const profileReady = isProfileComplete(profile);
+  const firstScanReady = completedScanCount(scans) > 0;
+  const horizon = QDAY_SCENARIOS[qdayScenario] || QDAY_SCENARIOS.ionq;
+  return (
+    <>
+      <PageTitle
+        title="Onboarding"
+        subtitle="Enter organization context before collecting evidence. After setup is complete, this tab hides. Select Onboarding on the Overview page to show it again."
+      >
+        <button className="secondary" onClick={() => setActive(ROUTES.overview)}>
+          <ChevronRight />
+          Return to overview
+        </button>
+      </PageTitle>
+      <section className="setup-checklist card" aria-label="Setup checklist">
+        {[
+          ["Organization profile", profileReady ? profile.name : "Name, industry, and geography are required.", profileReady],
+          ["Q-Day horizon", horizon.label, Boolean(qdayScenario)],
+          ["First scan target", firstScanReady ? `${completedScanCount(scans)} completed scan${completedScanCount(scans) === 1 ? "" : "s"}` : "Run one scan after setup.", firstScanReady],
+        ].map(([label, detail, done]) => (
+          <div className={done ? "done" : ""} key={label}>
+            <span>{done ? <Check /> : <Clock3 />}</span>
+            <b>{label}</b>
+            <small>{detail}</small>
+          </div>
+        ))}
+      </section>
+      <OrganizationProfile
+        initialProfile={profile}
+        onSave={(next) => {
+          onSave(next);
+          setActive(ROUTES.overview);
+        }}
+        onClose={() => setActive(ROUTES.overview)}
+        variant="page"
+      />
+    </>
+  );
+}
+
 function ReadinessDrivers({ scores, setActive, scanScope = false }) {
   const components = scores.readiness.components;
   const drivers = scanScope ? [
@@ -423,7 +574,7 @@ function ReadinessDrivers({ scores, setActive, scanScope = false }) {
         </span>
         <button
           className="text-link"
-          onClick={() => setActive("Q-Day Readiness")}
+          onClick={() => setActive(ROUTES.results)}
         >
           View calculation <ChevronRight />
         </button>
@@ -537,11 +688,230 @@ function QuantumContext() {
   return <><PageTitle title="Quantum introduction & context" subtitle="The concepts behind Q-Day readiness, explained without the hype."/><section className="content-grid"><article className="card quantum-context"><div className="context-intro"><span className="metric-icon blue"><Sparkles /></span><div><span className="eyebrow">Quantum fundamentals</span><h2>What QuantumSentinel is measuring</h2><p>QuantumSentinel measures evidence of organizational readiness and cryptographic exposure. It does not predict an exact Q-Day or claim that an observed endpoint represents an entire organization.</p></div></div><div className="context-terms">{QUANTUM_CONTEXT.map(item => { const ContextIcon=item.icon; return <div className={`context-term ${openTerm===item.term?"open":""}`} key={item.term}><button onClick={() => setOpenTerm(current => current===item.term?"":item.term)} aria-expanded={openTerm===item.term}><span className="context-term-copy"><i><ContextIcon /></i><span><b>{item.term}</b><small>{item.summary}</small></span></span><ChevronDown /></button>{openTerm===item.term&&<p>{item.detail}</p>}</div>; })}</div><div className="context-boundary"><ShieldCheck /><p><b>The practical goal:</b> establish what must remain protected, locate the cryptography supporting it, prioritize migration, and produce evidence that the transition is complete.</p></div></article></section></>;
 }
 
-function Overview({ data, scores, scans, setActive, openProfile }) {
-  const [scenario, setScenario] = useState("ionq");
+function localCbomFromAssets(assets = []) {
+  const data = assets.map((asset) => ({
+    componentId: `asset-${asset.id}`,
+    assetId: asset.id,
+    hostname: asset.hostname || asset.name || String(asset.id),
+    assetType: asset.type || "Observed Endpoint",
+    networkSegment: asset.segment || "Unknown",
+    cryptography: {
+      algorithm: asset.algo || asset.algorithm || "Unknown",
+      protocol: asset.proto || asset.protocol || "Unknown",
+      classification: asset.cls || "Unknown",
+      perfectForwardSecrecy: Boolean(asset.pfs),
+      certificateExpiration: asset.cert_exp || asset.certificateExpiration || "N/A",
+    },
+    risk: {
+      hndl: asset.hndl,
+      tnfl: asset.tnfl,
+      score: asset.risk,
+      priority: asset.prio || "MONITOR",
+    },
+    migration: {
+      target: asset.migration || "Assess migration path",
+      complexity: asset.complexity || "UNKNOWN",
+      hardwareRefreshRequired: asset.migration === "REQUIRES HW REFRESH",
+    },
+  }));
+  const vulnerable = data.filter((item) => !["HYBRID", "QUANTUM-SAFE", "QUANTUM-RESISTANT", "PQC"].includes(item.cryptography.classification)).length;
+  return {
+    data,
+    count: data.length,
+    summary: {
+      totalComponents: data.length,
+      vulnerableComponents: vulnerable,
+      pfsEnabled: data.filter((item) => item.cryptography.perfectForwardSecrecy).length,
+      requiresHardwareRefresh: data.filter((item) => item.migration.hardwareRefreshRequired).length,
+      migrationTargets: data.reduce((acc, item) => {
+        acc[item.migration.target] = (acc[item.migration.target] || 0) + 1;
+        return acc;
+      }, {}),
+    },
+  };
+}
+
+function CryptoInventory({ data, setActive, embedded = false }) {
+  const [cbom, setCbom] = useState(() => localCbomFromAssets(data?.assets || []));
+  const [snapshots, setSnapshots] = useState([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [ongoing, setOngoing] = useState(() => localStorage.getItem("quantumSentinel.cbom.ongoing") === "true");
+  const [cadence, setCadence] = useState(() => localStorage.getItem("quantumSentinel.cbom.cadence") || "daily");
+  const cadenceSeconds = cadence === "hourly" ? 3600 : cadence === "weekly" ? 604800 : 86400;
+  const components = cbom?.data || [];
+  const summary = cbom?.summary || {};
+  const latestSnapshot = snapshots[0];
+
+  const refreshInventory = useCallback(async () => {
+    const [nextCbom, nextSnapshots] = await Promise.all([loadCbom(), loadCbomSnapshots()]);
+    setCbom(nextCbom?.data?.length ? nextCbom : localCbomFromAssets(data?.assets || []));
+    setSnapshots(nextSnapshots);
+  }, [data]);
+
+  const createSnapshot = useCallback(async (source = "manual", returnToOverview = false) => {
+    setBusy(true);
+    setStatus("");
+    try {
+      const snapshot = await createCbomSnapshot({
+        name: `${source}-cbom-${new Date().toISOString().slice(0, 10)}`,
+        createdBy: "QuantumSentinel UI",
+        metadata: {
+          source,
+          cadence: source === "scheduled" ? cadence : "one-time",
+        },
+      });
+      await refreshInventory();
+      setStatus(`CBOM snapshot ${snapshot?.id || "created"} saved.`);
+      if (returnToOverview) setActive?.(ROUTES.overview);
+    } catch (error) {
+      setStatus(`CBOM snapshot failed: ${error.message || "snapshot endpoint unavailable"}.`);
+    } finally {
+      setBusy(false);
+    }
+  }, [cadence, refreshInventory, setActive]);
+
+  useEffect(() => {
+    refreshInventory();
+  }, [refreshInventory]);
+
+  useEffect(() => {
+    localStorage.setItem("quantumSentinel.cbom.ongoing", String(ongoing));
+    localStorage.setItem("quantumSentinel.cbom.cadence", cadence);
+    if (!ongoing) return undefined;
+    const timer = window.setInterval(() => {
+      createSnapshot("scheduled");
+    }, cadenceSeconds * 1000);
+    return () => window.clearInterval(timer);
+  }, [cadence, cadenceSeconds, createSnapshot, ongoing]);
+
+  const exportCurrent = () => {
+    downloadCbom(`quantumsentinel-cbom-${new Date().toISOString().slice(0, 10)}.json`);
+  };
+
+  return (
+    <>
+      {!embedded && (
+        <PageTitle
+          title="Crypto Inventory"
+          subtitle="Generate and preserve the cryptographic bill of materials for observed assets."
+        >
+          <button className="secondary" onClick={exportCurrent}>
+            <FileDown />
+            Download CBOM JSON
+          </button>
+          <button className="primary" onClick={() => createSnapshot("manual")} disabled={busy}>
+            <KeyRound />
+            {busy ? "Creating..." : "Generate CBOM from evidence"}
+          </button>
+        </PageTitle>
+      )}
+      <section className="content-grid cbom-grid">
+        <Metric icon={KeyRound} value={summary.totalComponents ?? components.length} label="CBOM components" tone="blue" />
+        <Metric icon={ShieldAlert} value={summary.vulnerableComponents ?? 0} label="vulnerable components" tone="red" />
+        <Metric icon={ShieldCheck} value={summary.pfsEnabled ?? 0} label="forward secrecy observed" tone="green" />
+        <article className="card cbom-control">
+          <div className="card-heading">
+            <span>
+              <RefreshCw />
+              Ongoing CBOM
+            </span>
+            <label className="switch" aria-label="Enable ongoing CBOM snapshots">
+              <input type="checkbox" checked={ongoing} onChange={(event) => setOngoing(event.target.checked)} />
+              <i />
+            </label>
+          </div>
+          <p>
+            Use the current scan evidence to create a CBOM. After the snapshot is saved, return to Overview to review the score and next action.
+          </p>
+          <button className="primary" onClick={() => createSnapshot("manual", true)} disabled={busy}>
+            <KeyRound />
+            {busy ? "Creating..." : "Generate CBOM and return to Overview"}
+          </button>
+          <p>
+            Ongoing CBOM keeps a recurring evidence checkpoint while this app session is open.
+            Use scheduled scans to refresh evidence before each snapshot.
+          </p>
+          <label>
+            Snapshot cadence
+            <select value={cadence} onChange={(event) => setCadence(event.target.value)}>
+              <option value="daily">Daily</option>
+              <option value="hourly">Hourly</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </label>
+          <button className="secondary" onClick={() => createSnapshot("scheduled")} disabled={busy}>
+            <Clock3 />
+            Create scheduled snapshot now
+          </button>
+          {status && <p className={status.includes("failed") ? "cbom-status error" : "cbom-status"}>{status}</p>}
+        </article>
+        <article className="card asset-list cbom-components">
+          <div className="card-heading">
+            <span>
+              <KeyRound />
+              Current CBOM components
+            </span>
+            <small>{latestSnapshot ? `Latest snapshot: ${latestSnapshot.id}` : "No saved snapshot yet"}</small>
+          </div>
+          {components.length ? components.slice(0, 8).map((item) => (
+            <div className="cbom-row" key={item.componentId}>
+              <span className="metric-icon blue">
+                <KeyRound />
+              </span>
+              <div>
+                <b>{item.hostname}</b>
+                <small>{item.componentId} · {item.assetType}</small>
+              </div>
+              <span>{item.cryptography.algorithm}</span>
+              <span>{item.cryptography.protocol}</span>
+              <span className={["HYBRID", "QUANTUM-SAFE", "PQC"].includes(item.cryptography.classification) ? "status-pill completed" : "status-pill failed"}>
+                {item.cryptography.classification}
+              </span>
+            </div>
+          )) : (
+            <p className="empty-scans">No CBOM components yet. Run an authorized scan to collect cryptographic evidence.</p>
+          )}
+        </article>
+        <article className="card cbom-history">
+          <div className="card-heading">
+            <span>
+              <CalendarClock />
+              CBOM snapshot history
+            </span>
+            <small>{snapshots.length} saved</small>
+          </div>
+          {snapshots.length ? snapshots.slice(0, 5).map((snapshot) => (
+            <div className="snapshot-row" key={snapshot.id}>
+              <div>
+                <b>{snapshot.name || snapshot.id}</b>
+                <small>{snapshot.id} · {new Date(snapshot.createdAt).toLocaleString()}</small>
+              </div>
+              <strong>{snapshot.count ?? snapshot.cbom?.count ?? 0}</strong>
+            </div>
+          )) : (
+            <p className="empty-scans">Create a one-time CBOM to preserve the first inventory baseline.</p>
+          )}
+        </article>
+        <article className="card cbom-boundary">
+          <CircleHelp />
+          <p>
+            <b>Evidence boundary:</b> The CBOM includes cryptography QuantumSentinel can observe from scans, probes, and persisted asset evidence.
+            Internal PKI, key stores, databases, stored ciphertext, code signing, and vendor systems still need authorized evidence collection.
+          </p>
+        </article>
+      </section>
+    </>
+  );
+}
+
+function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQdayScenario }) {
   const [scoreScope, setScoreScope] = useState("organization");
   const assets = data?.assets || [];
   const completedScans = scans.filter(scan => scan.status === "COMPLETED" && scan.result);
+  const profileComplete = isProfileComplete(profile);
+  const workflow = workflowStatus({ profile, scores, scans, data });
+  const NextIcon = workflow.next.icon;
   const selectedScan = completedScans.find(scan => scan.id === scoreScope) || null;
   const scopedHosts = new Set(selectedScan ? [
     selectedScan.target?.host,
@@ -559,25 +929,25 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
   const safe = scopedAssets.filter(asset => ["HYBRID", "QUANTUM-SAFE"].includes(asset.cls)).length;
   const readiness = displayScores.readiness;
   const assessed = readiness.assessed;
-  const horizon = QDAY_SCENARIOS[scenario];
+  const horizon = QDAY_SCENARIOS[qdayScenario];
   const horizonDisplay = formatHorizon(daysUntil(horizon.date));
   return (
     <>
       <PageTitle
-        title="Hello There..."
-        subtitle="Your cryptographic exposure, distilled."
+        title="Overview"
+        subtitle={profileComplete ? `${profile.name} readiness posture and next action.` : "Set up the organization profile before collecting evidence."}
       >
-        <button className="secondary" onClick={openProfile}>
+        <button className="secondary" onClick={() => setActive(ROUTES.onboarding)}>
           <Building2 />
-          Organization profile
+          Onboarding
         </button>
-        <button className="primary" onClick={() => setActive("Scan")}>
-          <Play />
-          Run a scan
+        <button className="primary" onClick={() => setActive(workflow.next.route)}>
+          <NextIcon />
+          {workflow.next.cta}
         </button>
-        <button className="secondary" onClick={() => setActive("Reports")}>
+        <button className="secondary" onClick={() => setActive(ROUTES.plan)}>
           <FileText />
-          View report
+          View plan
         </button>
       </PageTitle>
       <section className="overview-grid">
@@ -585,7 +955,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
           <div className="card-heading">
             <span>
               <ShieldCheck />
-              {selectedScan ? "Observed crypto posture" : "Q-Day Readiness"}
+              {selectedScan ? "Observed crypto posture" : "Readiness"}
             </span>
             <CircleHelp />
           </div>
@@ -621,12 +991,15 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
                     : `${critical} critical systems still depend on quantum-vulnerable cryptography.`
                   : "Complete onboarding and collect evidence to establish your first readiness baseline."}
               </p>
+              <p className="score-meaning">
+                {readinessMeaning(assessed ? readiness.score : null, critical)}
+              </p>
               {assessed && <span className="direction better">↑ {readiness.direction}</span>}
             </div>
           </div>
           <button
             className="text-link"
-            onClick={() => setActive("Q-Day Readiness")}
+            onClick={() => setActive(ROUTES.results)}
           >
             How this score works <ChevronRight />
           </button>
@@ -659,8 +1032,8 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
           <label>
             External scenario
             <select
-              value={scenario}
-              onChange={(event) => setScenario(event.target.value)}
+              value={qdayScenario}
+              onChange={(event) => setQdayScenario(event.target.value)}
             >
               <option value="ionq">IonQ 2029</option>
               <option value="conservative">Conservative 2032</option>
@@ -699,7 +1072,7 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
             </span>
             <button
               className="text-link"
-              onClick={() => setActive("Remediation")}
+              onClick={() => setActive(ROUTES.plan)}
             >
               View all <ChevronRight />
             </button>
@@ -717,11 +1090,11 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
                 <Clock3 />
                 Review
               </span>
-              <button onClick={() => setActive("Remediation")}>Open plan</button>
+              <button onClick={() => setActive(ROUTES.plan)}>Open plan</button>
             </div>
           )) : <p className="empty-scans">No priorities in this scope. Run an authorized scan to collect evidence.</p>}
         </article>
-        {scans.length > 0 && <button className="latest-scan" onClick={() => setActive("Exposure")}>
+        {scans.length > 0 && <button className="latest-scan" onClick={() => setActive(ROUTES.results)}>
           <Globe2 />
           <span>
             <small>Latest scan evidence</small>
@@ -735,8 +1108,8 @@ function Overview({ data, scores, scans, setActive, openProfile }) {
   );
 }
 
-function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
-  const [mode, setMode] = useState("public");
+function Scan({ scans, setScans, setActive, onEvidenceSaved, initialMode = "public" }) {
+  const [mode, setMode] = useState(initialMode);
   const [target, setTarget] = useState("");
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -754,6 +1127,24 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
   const [discoverActivePorts, setDiscoverActivePorts] = useState(true);
   const [networkPorts, setNetworkPorts] = useState("443, 8443");
   const [concurrency, setConcurrency] = useState(4);
+  useEffect(() => {
+    if (!["public", "device", "network"].includes(initialMode)) return;
+    setMode(initialMode);
+    setTarget(
+      initialMode === "public"
+        ? ""
+        : initialMode === "device"
+          ? "Local machine"
+          : "10.0.0.1, 10.0.0.2",
+    );
+    setRunning(false);
+    setCompleted(false);
+    setFailed(false);
+    setLastResult(null);
+    setProgress(0);
+    setError("");
+    setResultNote("");
+  }, [initialMode]);
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(
@@ -886,9 +1277,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
     }
   }
   const modes = [
-    ["public", Globe2, "Public website"],
-    ["device", Laptop, "This device"],
-    ["network", Network, "Authorized network"],
+    ["public", Globe2, "Public website", "Start with one internet-facing TLS endpoint."],
+    ["device", Laptop, "This device", "Check loopback TLS services on this machine."],
+    ["network", Network, "Authorized network", "Test only approved hosts and ports."],
   ];
   const modeConfig = {
     public: {
@@ -1085,15 +1476,18 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
       <PageTitle title={currentMode.title} subtitle={currentMode.subtitle} />
       <section className="scan-grid">
         <article className="card scan-composer">
-          <div className="mode-tabs">
-            {modes.map(([id, Icon, label]) => (
+          <div className="scan-choice-cards" aria-label="Choose scan type">
+            {modes.map(([id, Icon, label, description]) => (
               <button
                 className={mode === id ? "active" : ""}
                 onClick={() => selectMode(id)}
                 key={id}
               >
                 <Icon />
-                {label}
+                <span>
+                  <b>{label}</b>
+                  <small>{description}</small>
+                </span>
               </button>
             ))}
           </div>
@@ -1439,8 +1833,8 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
                 <p>No additional cryptographic findings were returned.</p>
               )}
               <div className="analysis-actions">
-                <button className="secondary" onClick={() => setActive("Exposure")}>Open Quantum Exposure <ChevronRight /></button>
-                <button className="secondary" onClick={() => setActive("Reports")}>Create evidence report <ChevronRight /></button>
+                <button className="secondary" onClick={() => setActive(ROUTES.results)}>Open results <ChevronRight /></button>
+                <button className="secondary" onClick={() => setActive(ROUTES.results)}>Generate CBOM <ChevronRight /></button>
               </div>
             </div>
             <p className="analysis-boundary"><CircleHelp /><span><b>Interpretation boundary:</b> Endpoint evidence can identify exposed cryptography, but it cannot establish organization-wide Quantum Readiness without internal inventory, governance, and migration evidence.</span></p>
@@ -1477,7 +1871,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved }) {
           ))}
           <button
             className="text-link"
-            onClick={() => setActive("Q-Day Readiness")}
+            onClick={() => setActive(ROUTES.results)}
           >
             Learn about scoring <ChevronRight />
           </button>
@@ -1619,16 +2013,19 @@ function RecentScans({ scans, onRescan }) {
   );
 }
 
-function Readiness({ scores }) {
+function Readiness({ scores, data, embedded = false }) {
   const readiness = scores.readiness;
   const components = readiness.components;
+  const criticalCount = data?.summary?.criticalCount ?? (data?.assets || []).filter(asset => ["CRITICAL", "HIGH"].includes(String(asset.prio).toUpperCase())).length;
   const [organizationTarget, setOrganizationTarget] = useState("2028-06-30");
   return (
     <>
-      <PageTitle
-        title="Q-Day Readiness"
-        subtitle="How prepared the organization is to identify, prioritize, and migrate quantum-vulnerable systems."
-      />
+      {!embedded && (
+        <PageTitle
+          title="Readiness"
+          subtitle="How prepared the organization is to identify, prioritize, and migrate quantum-vulnerable systems."
+        />
+      )}
       <section className="content-grid">
         <article className="card score-explainer">
           <ScoreRing score={readiness.assessed ? readiness.score : null} />
@@ -1645,6 +2042,9 @@ function Readiness({ scores }) {
               {readiness.assessed
                 ? "This is QuantumSentinel’s single headline score. It evaluates modernization, inventory coverage, migration planning, governance, and compensating controls from the available evidence."
                 : "QuantumSentinel will calculate a score after real cryptographic evidence has been collected. Zero is not displayed because no evidence is not the same as zero readiness."}
+            </p>
+            <p className="score-meaning">
+              {readinessMeaning(readiness.assessed ? readiness.score : null, criticalCount)}
             </p>
             {readiness.assessed && <span className="confidence-pill">
               {scores.confidence.label} · {scores.confidence.coverage}% coverage
@@ -1754,7 +2154,7 @@ function Readiness({ scores }) {
   );
 }
 
-function Exposure({ data }) {
+function Exposure({ data, embedded = false }) {
   const assets = data?.assets || [];
   const [assetFilter, setAssetFilter] = useState("all");
   const [selectedAsset, setSelectedAsset] = useState(null);
@@ -1806,15 +2206,17 @@ function Exposure({ data }) {
   };
   return (
     <>
-      <PageTitle
-        title="Quantum Exposure"
-        subtitle="Where quantum-vulnerable cryptography creates urgency across the observed environment."
-      >
-        <button className="secondary" onClick={exportSnapshot}>
-          <FileDown />
-          Export snapshot
-        </button>
-      </PageTitle>
+      {!embedded && (
+        <PageTitle
+          title="Risk Findings"
+          subtitle="Where quantum-vulnerable cryptography creates urgency across the observed environment."
+        >
+          <button className="secondary" onClick={exportSnapshot}>
+            <FileDown />
+            Export snapshot
+          </button>
+        </PageTitle>
+      )}
       <section className="content-grid">
         <Metric
           icon={ShieldAlert}
@@ -2056,7 +2458,7 @@ async function downloadMigrationPlan(action) {
   pdf.save(`quantumsentinel-${filename}-plan.pdf`);
 }
 
-function Remediation({ data, scans = [] }) {
+function Remediation({ data, scans = [], scores, profile, qdayScenario }) {
   const legacySeedIds = new Set(["rsa-gateway", "hybrid-vpn", "root-hierarchy"]);
   const [actions, setActions] = useState(() => {
     try {
@@ -2092,6 +2494,7 @@ function Remediation({ data, scans = [] }) {
         status: "Planned",
         urgency: Number(asset.risk) || 50,
         target: asset.migration || "Define a hybrid or post-quantum target state",
+        evidenceNeeded: "Owner approval, implementation record, updated CBOM, and post-change scan evidence.",
       };
     }), [data, scans]);
   const [sortBy, setSortBy] = useState("urgency");
@@ -2123,6 +2526,7 @@ function Remediation({ data, scans = [] }) {
       scanType: "Manual plan",
       urgency: 75,
       target: "Inventory, pilot, and migrate priority cryptography",
+      evidenceNeeded: "Approved scope, pilot result, updated CBOM, and validation scan.",
     };
     setActions(current => [newAction, ...current]);
     setPlanOpen(false);
@@ -2132,21 +2536,52 @@ function Remediation({ data, scans = [] }) {
   const openCount = allActions.filter(action => action.status !== "Completed").length;
   const progressCount = allActions.filter(action => action.status === "In progress").length;
   const completedCount = allActions.filter(action => action.status === "Completed").length;
+  const brief = deriveMigrationBrief(scores, data, profile, qdayScenario, scans);
+  const migrationReport = () => buildReportRecord(REPORT_TYPES[3], scores, data, profile, qdayScenario, scans);
   return (
     <>
       <PageTitle
-        title="Remediation"
+        title="Migration Plan"
         subtitle="Turn quantum risk into an owned, sequenced migration plan."
       >
         <button className="primary" onClick={() => setPlanOpen(true)}>
           <Wrench />
           Create plan
         </button>
+        <button className="secondary" onClick={() => downloadReportPdf(migrationReport())}>
+          <FileDown />
+          Download migration report
+        </button>
       </PageTitle>
       <section className="content-grid">
         <Metric icon={Target} value={openCount} label="open actions" tone="red" />
         <Metric icon={Activity} value={progressCount} label="in progress" tone="blue" />
         <Metric icon={Check} value={completedCount} label="completed" tone="green" />
+        <article className="card migration-pathway">
+          <div>
+            <span className="eyebrow">Path forward</span>
+            <h2>{brief.organizationName} migration pathway</h2>
+            <p>
+              The selected {brief.qdayHorizon.label} horizon leaves {brief.qdayHorizon.display}.
+              Set the internal readiness checkpoint by {brief.qdayHorizon.readinessDeadline}.
+            </p>
+          </div>
+          <div className="pathway-grid">
+            <span><b>{brief.readinessScore}</b><small>Q-Day score</small></span>
+            <span><b>{brief.cbom.count}</b><small>CBOM components</small></span>
+            <span><b>{brief.criticalCount}</b><small>priority assets</small></span>
+            <span><b>{brief.hndlCount + brief.tnflCount}</b><small>HNDL/TNFL signals</small></span>
+          </div>
+          <div className="pathway-timeline">
+            {MIGRATION_PHASES.slice(0, 4).map(([title, work], index) => (
+              <div key={title}>
+                <span className="step-number">{index + 1}</span>
+                <b>{title}</b>
+                <small>{work}</small>
+              </div>
+            ))}
+          </div>
+        </article>
         <article className="card asset-list">
           <div className="card-heading">
             <span>
@@ -2168,6 +2603,8 @@ function Remediation({ data, scans = [] }) {
               <div>
                 <b>{action.title}</b>
                 <small>{action.asset}</small>
+                <small>Target: {action.target}</small>
+                <small>Evidence: {action.evidenceNeeded || evidenceNeededForAction(action)}</small>
               </div>
               <span className="scan-type-pill">{action.scanType || "Manual plan"}</span>
               <span>{action.owner}</span>
@@ -2181,7 +2618,7 @@ function Remediation({ data, scans = [] }) {
         </article>
       </section>
       {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New remediation plan</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={() => setPlanOpen(false)} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input value={planOwner} onChange={event => setPlanOwner(event.target.value)} placeholder="Name or team" /></label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={() => setPlanOpen(false)}>Cancel</button><button type="submit" className="primary"><Check />Add to migration queue</button></div></form></div>}
-      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Remediation action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close remediation details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download migration plan PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div></dl><p><b>Planning boundary:</b> This is an accountable migration action. Completion should only be recorded when supporting implementation and validation evidence exists.</p></aside>}
+      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Migration action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close migration action details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download migration plan PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div><div><dt>Evidence needed</dt><dd>{selectedAction.evidenceNeeded || evidenceNeededForAction(selectedAction)}</dd></div></dl><p><b>Planning boundary:</b> This is an accountable migration action. Completion should only be recorded when supporting implementation and validation evidence exists.</p></aside>}
     </>
   );
 }
@@ -2193,14 +2630,176 @@ const REPORT_TYPES = [
   { id: "migration", title: "Migration plan", description: "Owners, milestones, dependencies, target states, and validation requirements.", sections: ["Prioritized backlog", "Migration phases", "Ownership and deadlines", "Completion evidence"] },
 ];
 
-function buildReportRecord(type, scores, data) {
+function assetName(asset) {
+  return asset?.hostname || asset?.name || String(asset?.id ?? "Unknown asset");
+}
+
+function targetState(asset) {
+  return asset?.migration && !/^N\/A$/i.test(String(asset.migration))
+    ? asset.migration
+    : "Define a hybrid or PQC target state";
+}
+
+function assetExposureReason(asset) {
+  const reasons = [];
+  if (asset?.cls === "SHOR-CRITICAL") reasons.push("uses quantum-vulnerable public-key cryptography");
+  if (asset?.cls === "DEPRECATED") reasons.push("uses deprecated cryptography");
+  if (asset?.pfs === false) reasons.push("does not show forward secrecy");
+  if (Number(asset?.hndl) >= 70) reasons.push("has HNDL relevance");
+  if (Number(asset?.tnfl) >= 70) reasons.push("has TNFL relevance");
+  if (asset?.prio === "CRITICAL") reasons.push("supports a critical system");
+  return reasons.length ? reasons.join("; ") : "requires cryptographic review";
+}
+
+function dueDate(days) {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function horizonContext(qdayScenario) {
+  const scenario = QDAY_SCENARIOS[qdayScenario] || QDAY_SCENARIOS.ionq;
+  const days = daysUntil(scenario.date);
+  const display = formatHorizon(days);
+  return {
+    ...scenario,
+    days,
+    label: scenario.label,
+    display: `${display.primary} ${display.secondary}`,
+    readinessDeadline: dueDate(Math.max(30, Math.min(365, Math.floor(days * 0.55)))),
+  };
+}
+
+function scanEvidenceSummary(scans = []) {
+  const completed = scans.filter(scan => scan.status === "COMPLETED");
+  if (!completed.length) return "No completed scans are saved.";
+  return completed.slice(0, 4).map(scan => {
+    const type = scan.type === "tls" ? "Website" : scan.type === "device" ? "This device" : "Authorized network";
+    return `${type}: ${scan.targetLabel || scan.target?.host || scan.id}`;
+  }).join("; ");
+}
+
+function deriveMigrationBrief(scores, data, profile = {}, qdayScenario = "ionq", scans = []) {
+  const assets = Array.isArray(data?.assets) ? data.assets : [];
+  const findings = Array.isArray(data?.findings) ? data.findings : [];
+  const cbom = localCbomFromAssets(assets);
+  const horizon = horizonContext(qdayScenario);
+  const observedAssets = assets.length;
+  const safeAssets = assets.filter(asset => ["HYBRID", "QUANTUM-SAFE"].includes(asset.cls)).length;
+  const plannedAssets = assets.filter(asset => asset.migration && !/^N\/A$/i.test(String(asset.migration))).length;
+  const criticalAssets = assets
+    .filter(asset => asset.prio === "CRITICAL" || Number(asset.risk) >= 75)
+    .toSorted((left, right) => Number(right.risk || 0) - Number(left.risk || 0));
+  const hndlCandidates = assets.filter(asset => asset.cls === "SHOR-CRITICAL" || Number(asset.hndl) >= 70);
+  const tnflCandidates = assets.filter(asset => Number(asset.tnfl) >= 70);
+  const openFindings = findings.filter(finding => !["closed", "remediated"].includes(String(finding.status || "").toLowerCase()));
+  const evidenceCoverage = scores.confidence.coverage;
+  const migrationCoverage = observedAssets ? Math.round((plannedAssets / observedAssets) * 100) : 0;
+  const safeCoverage = observedAssets ? Math.round((safeAssets / observedAssets) * 100) : 0;
+  const readinessScore = scores.readiness.assessed ? scores.readiness.score : null;
+
+  const backlog = criticalAssets.slice(0, 6).map((asset, index) => ({
+    rank: index + 1,
+    asset: assetName(asset),
+    urgency: Number(asset.risk) || Number(asset.hndl) || 50,
+    reason: assetExposureReason(asset),
+    owner: "Assign system owner",
+    deadline: dueDate(index < 2 ? 45 : 90),
+    target: targetState(asset),
+    validation: "Rescan after change and attach implementation evidence.",
+  }));
+
+  const decisionRequired = [
+    {
+      title: "Set migration authority",
+      owner: "CTO or security executive",
+      decision: "Name the executive sponsor and migration owner.",
+      due: dueDate(14),
+    },
+    {
+      title: "Approve scope",
+      owner: "Security architecture",
+      decision: "Approve the systems, data flows, vendors, and trust anchors in scope.",
+      due: dueDate(30),
+    },
+    {
+      title: "Fund priority pilots",
+      owner: "Platform and application leads",
+      decision: "Select the first hybrid or PQC pilots for the highest-risk systems.",
+      due: dueDate(45),
+    },
+  ];
+
+  const blockers = [];
+  if (evidenceCoverage < 80) blockers.push("Evidence coverage is below 80%. Complete inventory before final risk acceptance.");
+  if (migrationCoverage < 60) blockers.push("Most observed assets do not have a target migration state.");
+  if (criticalAssets.length) blockers.push(`${criticalAssets.length} critical assets need owner, deadline, and validation evidence.`);
+  if (!hndlCandidates.length && observedAssets) blockers.push("No HNDL candidates are tagged. Confirm data lifetime assumptions.");
+  if (!tnflCandidates.length && observedAssets) blockers.push("No TNFL candidates are tagged. Confirm signing and trust-chain evidence.");
+  if (!observedAssets) blockers.push("No assets are observed. Run a scan before using the report for decisions.");
+
+  const evidenceGaps = [
+    "Internal PKI, code signing, databases, key stores, and vendor dependencies are not proven by a public TLS scan.",
+    "Unknown cryptography must remain an evidence gap until a collector or owner confirms it.",
+    "Completion requires implementation evidence, validation evidence, an updated inventory, and a rescan.",
+  ];
+
+  const nextAction = !observedAssets
+    ? "Run an authorized scan and create the first evidence baseline."
+    : criticalAssets.length
+      ? `Assign owners and deadlines for ${Math.min(criticalAssets.length, 6)} priority assets.`
+      : migrationCoverage < 80
+        ? "Document the target migration state for each observed asset."
+        : "Validate implemented controls and preserve closure evidence.";
+
+  const briefStatus = readinessScore == null
+    ? "Evidence baseline required"
+    : readinessScore < 50
+      ? "Migration program required"
+      : readinessScore < 70
+        ? "Migration execution required"
+        : "Validation and operation required";
+
+  return {
+    briefStatus,
+    nextAction,
+    readinessScore: readinessScore ?? "Not assessed",
+    readinessClass: scores.readiness.classification,
+    confidence: scores.confidence.level,
+    evidenceCoverage,
+    migrationCoverage,
+    safeCoverage,
+    observedAssets,
+    criticalCount: criticalAssets.length,
+    hndlCount: hndlCandidates.length,
+    tnflCount: tnflCandidates.length,
+    openFindingCount: openFindings.length,
+    backlog,
+    decisionRequired,
+    blockers,
+    evidenceGaps,
+    organizationName: profile?.name || "The organization",
+    industry: profile?.industry || "Unspecified industry",
+    geography: profile?.geography || "Unspecified geography",
+    cbom,
+    scanSummary: scanEvidenceSummary(scans),
+    qdayHorizon: horizon,
+  };
+}
+
+function buildReportRecord(type, scores, data, profile = {}, qdayScenario = "ionq", scans = []) {
+  const brief = deriveMigrationBrief(scores, data, profile, qdayScenario, scans);
   const summary = data?.summary || {};
   const metrics = {
+    organization: brief.organizationName,
     readinessScore: scores.readiness.assessed ? scores.readiness.score : "Not assessed",
     readinessClassification: scores.readiness.classification,
+    qdayScenario: brief.qdayHorizon.label,
+    qdayHorizon: brief.qdayHorizon.display,
+    readinessDeadline: brief.qdayHorizon.readinessDeadline,
     evidenceConfidence: scores.confidence.level,
     evidenceCoveragePct: scores.confidence.coverage,
     observedAssets: summary.totalAssets || data?.assets?.length || 0,
+    completedScans: scans.filter(scan => scan.status === "COMPLETED").length,
+    cbomComponents: brief.cbom.count,
     criticalExposures: summary.criticalCount || 0,
     hndlCandidates: summary.shorCount || 0,
     tnflCandidates: (data?.assets || []).filter(asset => Number(asset.tnfl) >= 70).length,
@@ -2208,16 +2807,16 @@ function buildReportRecord(type, scores, data) {
   };
   const criticalNames = (data?.assets || []).filter(asset => asset.prio === "CRITICAL").slice(0, 4).map(asset => asset.hostname || asset.name || asset.id).filter(Boolean);
   const executiveSections = [
-    { title: "Readiness summary", body: `The organization is ${metrics.readinessClassification.toLowerCase()} at ${metrics.readinessScore}/100 readiness. This indicates that material migration work remains before critical systems can be treated as prepared for a post-quantum transition. Evidence confidence is ${String(metrics.evidenceConfidence).toLowerCase()} with ${metrics.evidenceCoveragePct}% measured field coverage.`, bullets: [`${metrics.quantumSafeAssets} of ${metrics.observedAssets} observed assets currently show hybrid or quantum-safe evidence.`, "The readiness score is a prioritization signal, not a prediction of when a CRQC will arrive.", "Unknown evidence must reduce confidence and must not be interpreted as proof of safety."] },
+    { title: "Readiness summary", body: `${brief.organizationName} is ${metrics.readinessClassification.toLowerCase()} at ${metrics.readinessScore}/100 readiness against the ${brief.qdayHorizon.label} planning scenario. Evidence confidence is ${String(metrics.evidenceConfidence).toLowerCase()} with ${metrics.evidenceCoveragePct}% measured field coverage.`, bullets: [`${metrics.quantumSafeAssets} of ${metrics.observedAssets} observed assets currently show hybrid or quantum-safe evidence.`, `${metrics.cbomComponents} CBOM components are included in this evidence snapshot.`, `Target readiness checkpoint: ${brief.qdayHorizon.readinessDeadline}.`] },
     { title: "Material exposure", body: `${metrics.criticalExposures} critical exposures, ${metrics.hndlCandidates} HNDL candidates, and ${metrics.tnflCandidates} TNFL signature/trust candidates require executive attention. Public-facing observations show only the external cryptographic posture; internal PKI, stored data, code signing, VPNs, and vendor dependencies may carry additional exposure.`, bullets: criticalNames.length ? criticalNames.map(name => `${name} is currently classified as a critical observed asset.`) : ["No named critical assets were available in the current evidence snapshot.", "Complete internal discovery before treating the exposure count as comprehensive."] },
-    { title: "Leadership decisions", body: "Leadership should convert the technical findings into a funded, owned migration program with deadlines that precede every external Q-Day scenario.", bullets: ["Name an accountable executive sponsor and cryptographic migration owner.", "Approve the scope and deadline for a complete cryptographic inventory and CBOM baseline.", "Fund pilots for hybrid or standardized PQC on the highest-value systems and data flows.", "Require vendors to disclose cryptographic dependencies, migration roadmaps, and validation evidence.", "Track exceptions, compensating controls, rollback plans, and readiness impact at each governance review."] },
+    { title: "Leadership decisions", body: `Current decision state: ${brief.briefStatus}. Next action: ${brief.nextAction}`, bullets: brief.decisionRequired.map(item => `${item.owner}: ${item.decision} Due ${item.due}.`) },
     { title: "Evidence limitations", body: "This posture is bounded by the evidence QuantumSentinel can currently observe. A TLS endpoint, device collector, or authorized network scan cannot by itself establish organization-wide quantum readiness.", bullets: ["Public scans observe negotiated TLS and presented certificate evidence, not internal systems.", "Device and network collection is limited to approved scope, reachable services, and available metadata.", "A completed migration requires implementation, validation, inventory, and rescan evidence.", "Scores and counts should be refreshed whenever systems, algorithms, policies, or data-lifetime assumptions change."] },
   ];
   const readinessSections = [
-    { title: "Quantum Readiness Score", body: `The current score is ${metrics.readinessScore}/100 (${metrics.readinessClassification}). Higher is better. The score combines modernization, inventory coverage, migration planning, governance, and compensating controls; it does not forecast a CRQC date.`, bullets: ["0-24: unprepared; 25-49: early-stage; 50-69: transitioning.", "70-84: prepared; 85-100: quantum-ready.", `${metrics.evidenceConfidence} evidence confidence means the score should be interpreted with the documented collection boundary.`] },
+    { title: "Quantum Readiness Score", body: `The current score for ${brief.organizationName} is ${metrics.readinessScore}/100 (${metrics.readinessClassification}). The score is interpreted against the selected ${brief.qdayHorizon.label} scenario, which has ${brief.qdayHorizon.display} remaining.`, bullets: ["0-24: unprepared; 25-49: early-stage; 50-69: transitioning.", "70-84: prepared; 85-100: quantum-ready.", `${metrics.evidenceConfidence} evidence confidence means the score should be interpreted with the documented collection boundary.`] },
     { title: "Weighted score components", body: "Each component contributes a defined share of the single readiness score. Improving a weak component raises readiness only when supporting evidence is collected.", bullets: Object.entries(scores.components || {}).map(([key, value]) => `${key.replace(/([A-Z])/g, " $1")}: ${Math.round(value)} evidence points.`) },
     { title: "Evidence confidence", body: `${metrics.evidenceCoveragePct}% field coverage describes completeness of the fields currently measured, not completeness of the entire environment. Confidence must also reflect source quality, scan scope, and the age of evidence.`, bullets: ["Public TLS evidence covers one presented endpoint.", "Device and network evidence covers only authorized and reachable scope.", "Governance and migration assertions require documentary and implementation evidence."] },
-    { title: "Readiness timeline", body: "The organization should establish a controllable deadline for inventory, pilots, critical-system migration, and validation that precedes every external Q-Day scenario.", bullets: ["Set a complete inventory baseline first.", "Pilot priority protocols and trust chains next.", "Finish critical-system cutover, rescan, and evidence review before declaring readiness."] },
+    { title: "Readiness timeline", body: `${brief.organizationName} should set an internal readiness checkpoint by ${brief.qdayHorizon.readinessDeadline}. This date precedes the selected ${brief.qdayHorizon.label} horizon and creates time for validation, exceptions, and rescan evidence.`, bullets: ["Set a complete inventory baseline first.", "Pilot priority protocols and trust chains next.", "Finish critical-system cutover, rescan, and evidence review before declaring readiness."] },
   ];
   const exposureSections = [
     { title: "Exposure summary", body: `${metrics.criticalExposures} critical exposures were identified across ${metrics.observedAssets} observed assets. ${metrics.quantumSafeAssets} assets currently show hybrid or quantum-safe evidence.`, bullets: ["Exposure indicates reliance on potentially vulnerable cryptography; it is not proof of compromise.", "Counts reflect observed evidence and can rise as inventory coverage expands.", "Priority should combine cryptographic posture, data lifetime, business criticality, and migration complexity."] },
@@ -2226,8 +2825,9 @@ function buildReportRecord(type, scores, data) {
     { title: "Observed evidence boundary", body: "Observed public, device, and network cryptography provides a starting point, not an organization-wide attestation.", bullets: ["Public endpoints do not expose internal PKI, databases, stored ciphertext, or governance.", "Unreachable services and opaque vendor components remain evidence gaps.", "Unknown fields must be investigated and never counted as safe."] },
   ];
   const migrationSections = [
-    { title: "Prioritized backlog", body: `${metrics.criticalExposures} critical exposures and ${metrics.hndlCandidates} HNDL candidates form the initial migration backlog. Sequence work by business impact, data lifetime, dependency depth, and feasibility.`, bullets: criticalNames.length ? criticalNames.map(name => `${name}: assign an owner, target state, deadline, dependencies, and rollback path.`) : ["Complete discovery before finalizing the backlog."] },
-    { title: "Migration phases", body: "Use an evidence-gated sequence rather than a single algorithm replacement event.", bullets: MIGRATION_PHASES.map(([title, work]) => `${title}: ${work}`) },
+    { title: "Program context", body: `${brief.organizationName} operates in ${brief.industry} with primary geography ${brief.geography}. Current scan evidence: ${brief.scanSummary}. The CBOM contains ${brief.cbom.count} cryptographic components.`, bullets: [`Selected Q-Day planning scenario: ${brief.qdayHorizon.label}.`, `Time remaining in scenario: ${brief.qdayHorizon.display}.`, `Internal readiness checkpoint: ${brief.qdayHorizon.readinessDeadline}.`] },
+    { title: "Prioritized backlog", body: `${brief.criticalCount} critical assets, ${brief.hndlCount} HNDL candidates, and ${brief.tnflCount} TNFL candidates form the current migration backlog. Sequence work by business impact, data lifetime, dependency depth, and feasibility.`, bullets: brief.backlog.length ? brief.backlog.map(item => `${item.asset}: ${item.reason}. Target: ${item.target}. Due ${item.deadline}.`) : ["Complete discovery before finalizing the backlog."] },
+    { title: "Generalized migration timeline", body: `Use an evidence-gated sequence that reaches validation before ${brief.qdayHorizon.readinessDeadline}. The timeline must compress if scan coverage expands or the Q-Day horizon moves earlier.`, bullets: MIGRATION_PHASES.map(([title, work]) => `${title}: ${work}`) },
     { title: "Ownership and deadlines", body: "Every action requires one accountable owner, a funded delivery team, a target date, and explicit dependency and exception management.", bullets: ["Executive sponsor: resolves funding, risk acceptance, and cross-business conflicts.", "System owner: validates availability, interoperability, and rollback requirements.", "Security and architecture: approve target profiles and validation evidence.", "Procurement and legal: enforce vendor disclosure and migration commitments."] },
     { title: "Completion evidence", body: "A migration item is complete only when implementation and validation evidence demonstrates the target state in production.", bullets: ["Approved architecture and change record.", "Test and pilot results, including failure and rollback behavior.", "Updated cryptographic inventory or CBOM.", "Post-change scan confirming expected cryptography and no regression.", "Documented, time-bounded exceptions with compensating controls."] },
   ];
@@ -2235,11 +2835,12 @@ function buildReportRecord(type, scores, data) {
   return {
     reportId: `${type.id}-${Date.now()}`,
     type: type.id,
-    title: type.title,
+    title: type.id === "migration" ? `${brief.organizationName} PQC Migration Plan` : type.title,
     generatedAt: new Date().toISOString(),
     description: type.description,
     sections: sectionsByType[type.id],
     metrics,
+    brief,
     evidenceBoundary: "This report reflects available inventory, probe, governance, and migration evidence. Unknown or unobserved fields are not proof of safety.",
   };
 }
@@ -2271,6 +2872,15 @@ async function downloadReportPdf(report) {
   pdf.setFont("helvetica", "bold"); write("QUANTUM SENTINEL", 11, [7, 94, 232], 18); write(report.title, 26, [14, 35, 70], 10);
   pdf.setFont("helvetica", "normal"); write(report.description, 11, [90, 109, 143], 20);
   pdf.setDrawColor(218, 226, 238); pdf.line(margin, y, width - margin, y); y += 24;
+  if (report.brief) {
+    pdf.setFont("helvetica", "bold"); write("Migration decision state", 16, [14, 35, 70], 8);
+    pdf.setFont("helvetica", "normal"); write(`${report.brief.briefStatus}. ${report.brief.nextAction}`, 10, [54, 72, 103], 10);
+    report.brief.decisionRequired.forEach(item => {
+      ensure(34);
+      write(`${item.owner}: ${item.decision} Due ${item.due}.`, 9, [54, 72, 103], 4, 14);
+    });
+    y += 8;
+  }
   pdf.setFont("helvetica", "bold"); write("Current evidence snapshot", 16, [14, 35, 70], 12);
   Object.entries(report.metrics).forEach(([key, value]) => { const label = key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase()); pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(90, 109, 143); pdf.text(clean(label).toUpperCase(), margin, y); pdf.setFont("helvetica", "normal"); pdf.setFontSize(11); pdf.setTextColor(14, 35, 70); pdf.text(clean(value), margin + 190, y); y += 23; });
   y += 10;
@@ -2289,26 +2899,607 @@ async function downloadReportPdf(report) {
   pdf.save(`quantumsentinel-${report.type}-report.pdf`);
 }
 
-function Reports({ scores, data }) {
+function Reports({ scores, data, profile, qdayScenario, scans, embedded = false }) {
   const [selectedReport, setSelectedReport] = useState(null);
   const [generatorOpen, setGeneratorOpen] = useState(false);
-  const [generatorType, setGeneratorType] = useState("executive");
-  const openReport = type => setSelectedReport(buildReportRecord(type, scores, data));
-  const generatedReport = () => buildReportRecord(REPORT_TYPES.find(type => type.id === generatorType), scores, data);
+  const [generatorType, setGeneratorType] = useState("migration");
+  const brief = deriveMigrationBrief(scores, data, profile, qdayScenario, scans);
+  const openReport = type => setSelectedReport(buildReportRecord(type, scores, data, profile, qdayScenario, scans));
+  const generatedReport = () => buildReportRecord(REPORT_TYPES.find(type => type.id === generatorType), scores, data, profile, qdayScenario, scans);
   const posture = scores.readiness.assessed
     ? `Readiness ${scores.readiness.score}/100 · ${scores.readiness.classification} · ${scores.confidence.level} confidence`
     : "Not yet assessed · collect evidence before generating a posture score";
-  return <><PageTitle title="Reports" subtitle="Clear, evidence-backed outputs centered on one Quantum Readiness Score."><button className="primary" onClick={() => setGeneratorOpen(true)}><FileDown />Generate report</button></PageTitle><section className="report-grid">{REPORT_TYPES.map((type, index) => <article className="card report-card" key={type.id}><span className={`report-icon r${index}`}><FileText /></span><div><h2>{type.title}</h2><p>{type.id === "executive" ? posture : type.description}</p><small>Live evidence · PDF & JSON</small></div><button className="secondary" onClick={() => openReport(type)}>Open <ChevronRight /></button></article>)}</section>{generatorOpen && <div className="plan-backdrop"><div className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Generate evidence report"><div className="plan-dialog-heading"><div><span className="eyebrow">Report generator</span><h2>Choose an evidence package</h2><p>Exports use the current readiness and inventory snapshot.</p></div><button className="icon-button" onClick={() => setGeneratorOpen(false)} aria-label="Close report generator">×</button></div><label>Report type<select value={generatorType} onChange={event => setGeneratorType(event.target.value)}>{REPORT_TYPES.map(type => <option value={type.id} key={type.id}>{type.title}</option>)}</select></label><div className="plan-actions"><button className="secondary" onClick={() => downloadReportJson(generatedReport())}>Download JSON</button><button className="primary" onClick={() => downloadReportPdf(generatedReport())}><FileDown />Generate PDF</button></div></div></div>}{selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Evidence report</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><dl>{Object.entries(selectedReport.metrics).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase())}</dt><dd>{value}</dd></div>)}</dl><h3>Report sections</h3><div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}</>;
+  const primaryReport = buildReportRecord(REPORT_TYPES[3], scores, data, profile, qdayScenario, scans);
+  return (
+    <>
+      {!embedded && (
+        <PageTitle
+          title="PQC Migration Plan"
+          subtitle={`${brief.organizationName}: scan evidence, CBOM, Q-Day score, and migration path.`}
+        >
+          <button className="primary" onClick={() => downloadReportPdf(primaryReport)}>
+            <FileDown />
+            Download PQC migration plan
+          </button>
+          <button className="secondary" onClick={() => setGeneratorOpen(true)}>
+            <FileText />
+            Other exports
+          </button>
+        </PageTitle>
+      )}
+      <section className="brief-grid">
+        <article className="card brief-hero">
+          <div>
+            <span className="eyebrow">Decision state</span>
+            <h2>{brief.briefStatus}</h2>
+            <p>{brief.nextAction}</p>
+          </div>
+          <ScoreRing score={Number.isFinite(brief.readinessScore) ? brief.readinessScore : null} label="Readiness" />
+          <div className="brief-actions">
+            <button className="primary" onClick={() => downloadReportPdf(primaryReport)}>
+              <FileDown />
+              Download PDF
+            </button>
+            <button className="secondary" onClick={() => openReport(REPORT_TYPES[3])}>
+              Open plan <ChevronRight />
+            </button>
+          </div>
+        </article>
+        <article className="card brief-metrics">
+          <div><small>Evidence confidence</small><strong>{brief.confidence}</strong><span>{brief.evidenceCoverage}% coverage</span></div>
+          <div><small>Observed assets</small><strong>{brief.observedAssets}</strong><span>{brief.safeCoverage}% hybrid or safe</span></div>
+          <div><small>Critical assets</small><strong>{brief.criticalCount}</strong><span>{brief.openFindingCount} open findings</span></div>
+          <div><small>HNDL / TNFL</small><strong>{brief.hndlCount} / {brief.tnflCount}</strong><span>priority candidates</span></div>
+        </article>
+        <article className="card brief-section">
+          <div className="card-heading">
+            <span><Target />Priority migration backlog</span>
+            <small>{brief.migrationCoverage}% with target state</small>
+          </div>
+          <div className="brief-backlog">
+            {brief.backlog.length ? brief.backlog.map(item => (
+              <div className="brief-backlog-row" key={`${item.rank}-${item.asset}`}>
+                <span className="step-number">{item.rank}</span>
+                <div>
+                  <b>{item.asset}</b>
+                  <small>{item.reason}</small>
+                </div>
+                <span>{item.target}</span>
+                <span>{item.owner}</span>
+                <strong>{item.deadline}</strong>
+              </div>
+            )) : <p className="empty-scans">No priority backlog exists yet. Run a scan or complete the asset inventory.</p>}
+          </div>
+        </article>
+        <article className="card brief-section">
+          <div className="card-heading">
+            <span><ShieldAlert />Blockers and evidence gaps</span>
+          </div>
+          <div className="brief-list">
+            {brief.blockers.map(item => <p key={item}><ShieldAlert />{item}</p>)}
+            {brief.evidenceGaps.map(item => <p key={item}><CircleHelp />{item}</p>)}
+          </div>
+        </article>
+        <article className="card brief-section">
+          <div className="card-heading">
+            <span><Building2 />Decisions required</span>
+          </div>
+          <div className="decision-list">
+            {brief.decisionRequired.map(item => (
+              <div key={item.title}>
+                <b>{item.title}</b>
+                <span>{item.owner}</span>
+                <p>{item.decision}</p>
+                <small>Due {item.due}</small>
+              </div>
+            ))}
+          </div>
+        </article>
+        <article className="card brief-section">
+          <div className="card-heading">
+            <span><FileText />Secondary export packages</span>
+            <small>{posture}</small>
+          </div>
+          <div className="report-grid brief-report-grid">
+            {REPORT_TYPES.map((type, index) => (
+              <article className="report-card" key={type.id}>
+                <span className={`report-icon r${index}`}><FileText /></span>
+                <div>
+                  <h2>{type.title}</h2>
+                  <p>{type.description}</p>
+                  <small>Includes migration brief context.</small>
+                </div>
+                <button className="secondary" onClick={() => openReport(type)}>
+                  Open <ChevronRight />
+                </button>
+              </article>
+            ))}
+          </div>
+        </article>
+      </section>
+      {generatorOpen && (
+        <div className="plan-backdrop">
+          <div className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Generate migration brief">
+            <div className="plan-dialog-heading">
+              <div>
+                <span className="eyebrow">Secondary exports</span>
+                <h2>Choose another output package</h2>
+                <p>The default export is the PQC migration plan PDF.</p>
+              </div>
+              <button className="icon-button" onClick={() => setGeneratorOpen(false)} aria-label="Close report generator">×</button>
+            </div>
+            <label>
+              Output type
+              <select value={generatorType} onChange={event => setGeneratorType(event.target.value)}>
+                {REPORT_TYPES.map(type => <option value={type.id} key={type.id}>{type.title}</option>)}
+              </select>
+            </label>
+            <div className="plan-actions">
+              <button className="secondary" onClick={() => downloadReportJson(generatedReport())}>Download JSON</button>
+              <button className="primary" onClick={() => downloadReportPdf(generatedReport())}><FileDown />Generate PDF</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {selectedReport && (
+        <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details">
+          <div className="asset-drawer-heading">
+            <span className="report-icon"><FileText /></span>
+            <div>
+              <span className="eyebrow">Migration plan output</span>
+              <h2>{selectedReport.title}</h2>
+            </div>
+            <button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button>
+          </div>
+          <p className="report-description">{selectedReport.description}</p>
+          <div className="drawer-actions">
+            <button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button>
+            <button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button>
+          </div>
+          <h3>Decision state</h3>
+          <div className="drawer-brief">
+            <b>{selectedReport.brief.briefStatus}</b>
+            <p>{selectedReport.brief.nextAction}</p>
+          </div>
+          <dl>{Object.entries(selectedReport.metrics).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, character => character.toUpperCase())}</dt><dd>{value}</dd></div>)}</dl>
+          <h3>Report sections</h3>
+          <div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div>
+          <p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p>
+        </aside>
+      )}
+    </>
+  );
+}
+
+function ResultsWorkspace({ data, scores, setActive }) {
+  const assets = useMemo(() => (Array.isArray(data?.assets) ? data.assets : []), [data]);
+  const [cbom, setCbom] = useState(() => localCbomFromAssets(assets));
+  const [snapshots, setSnapshots] = useState([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const summary = cbom?.summary || {};
+  const components = cbom?.data || [];
+  const latestSnapshot = snapshots[0];
+  const readiness = scores.readiness;
+  const criticalAssets = assets
+    .filter(asset => ["CRITICAL", "HIGH"].includes(String(asset.prio).toUpperCase()) || Number(asset.risk) >= 70)
+    .toSorted((left, right) => Number(right.risk || 0) - Number(left.risk || 0));
+  const hndlCount = assets.filter(asset => asset.cls === "SHOR-CRITICAL" || Number(asset.hndl) >= 70).length;
+  const tnflCount = assets.filter(asset => Number(asset.tnfl) >= 70).length;
+  const safeCount = assets.filter(asset => ["HYBRID", "QUANTUM-SAFE", "PQC"].includes(asset.cls)).length;
+  const drivers = [
+    ["Crypto modernization", readiness.components.cryptoModernization, 35],
+    ["Inventory coverage", readiness.components.inventoryCoverage, 20],
+    ["Migration planning", readiness.components.migrationPlanning, 20],
+    ["Governance maturity", readiness.components.governanceMaturity, 15],
+    ["Compensating controls", readiness.components.compensatingControls, 10],
+  ];
+
+  const refreshInventory = useCallback(async () => {
+    const [nextCbom, nextSnapshots] = await Promise.all([loadCbom(), loadCbomSnapshots()]);
+    setCbom(nextCbom?.data?.length ? nextCbom : localCbomFromAssets(assets));
+    setSnapshots(nextSnapshots);
+  }, [assets]);
+
+  const createSnapshot = useCallback(async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      const snapshot = await createCbomSnapshot({
+        name: `results-cbom-${new Date().toISOString().slice(0, 10)}`,
+        createdBy: "QuantumSentinel UI",
+        metadata: { source: "results" },
+      });
+      await refreshInventory();
+      setStatus(`CBOM snapshot ${snapshot?.id || "created"} saved.`);
+    } catch (error) {
+      setStatus(`CBOM snapshot failed: ${error.message || "snapshot endpoint unavailable"}.`);
+    } finally {
+      setBusy(false);
+    }
+  }, [refreshInventory]);
+
+  useEffect(() => {
+    refreshInventory();
+  }, [refreshInventory]);
+
+  const exportCurrent = () => {
+    downloadCbom(`quantumsentinel-cbom-${new Date().toISOString().slice(0, 10)}.json`);
+  };
+
+  return (
+    <>
+      <PageTitle
+        title="Results"
+        subtitle="CBOM, findings, and readiness in one evidence view."
+      >
+        <button className="secondary" onClick={() => setActive(ROUTES.collect)}>
+          <Target />
+          Run another scan
+        </button>
+        <button className="primary" onClick={() => setActive(ROUTES.plan)}>
+          <Wrench />
+          Open plan
+        </button>
+      </PageTitle>
+      <section className="results-layout">
+        <article className="card results-score">
+          <div>
+            <span className="eyebrow">Readiness result</span>
+            <h2>{readiness.assessed ? `${readiness.score}/100 · ${readiness.classification}` : "Not yet assessed"}</h2>
+            <p>{readinessMeaning(readiness.assessed ? readiness.score : null, criticalAssets.length)}</p>
+          </div>
+          <ScoreRing score={readiness.assessed ? readiness.score : null} />
+          <div className="results-stat-grid">
+            <span><b>{assets.length}</b><small>observed assets</small></span>
+            <span><b>{components.length}</b><small>CBOM components</small></span>
+            <span><b>{criticalAssets.length}</b><small>priority findings</small></span>
+            <span><b>{safeCount}</b><small>hybrid or safe</small></span>
+          </div>
+        </article>
+
+        <article className="card results-cbom">
+          <div className="card-heading">
+            <span><KeyRound />CBOM</span>
+            <small>{latestSnapshot ? `Latest: ${latestSnapshot.id}` : "No snapshot saved"}</small>
+          </div>
+          <p>Generate the cryptographic bill of materials from current scan evidence.</p>
+          <div className="results-actions">
+            <button className="primary" onClick={createSnapshot} disabled={busy}>
+              <KeyRound />
+              {busy ? "Generating..." : "Generate CBOM"}
+            </button>
+            <button className="secondary" onClick={exportCurrent}>
+              <FileDown />
+              Download JSON
+            </button>
+          </div>
+          {status && <p className={status.includes("failed") ? "cbom-status error" : "cbom-status"}>{status}</p>}
+          <div className="compact-list">
+            {components.slice(0, 5).map(item => (
+              <div key={item.componentId}>
+                <b>{item.hostname}</b>
+                <span>{item.cryptography.algorithm}</span>
+                <small>{item.cryptography.classification}</small>
+              </div>
+            ))}
+            {!components.length && <p className="empty-scans">No CBOM components yet. Run a scan first.</p>}
+          </div>
+        </article>
+
+        <article className="card results-findings">
+          <div className="card-heading">
+            <span><ShieldAlert />Priority findings</span>
+            <small>{hndlCount} HNDL · {tnflCount} TNFL</small>
+          </div>
+          <div className="compact-list finding-list">
+            {criticalAssets.slice(0, 6).map(asset => (
+              <div key={asset.id || asset.hostname || asset.name}>
+                <b>{asset.hostname || asset.name || asset.id}</b>
+                <span>{assetExposureReason(asset)}</span>
+                <small>{targetState(asset)}</small>
+              </div>
+            ))}
+            {!criticalAssets.length && <p className="empty-scans">No priority findings yet. Run an authorized scan to collect evidence.</p>}
+          </div>
+          <button className="secondary" onClick={() => setActive(ROUTES.plan)}>
+            Open migration queue <ChevronRight />
+          </button>
+        </article>
+
+        <article className="card results-drivers">
+          <div className="card-heading">
+            <span><ShieldCheck />Score drivers</span>
+            <small>{scores.confidence.label} confidence</small>
+          </div>
+          {drivers.map(([label, value, weight]) => (
+            <div className="compact-driver" key={label}>
+              <span>{label}</span>
+              <div><i style={{ width: `${Math.max(2, value)}%` }} /></div>
+              <b>{Math.round(value)}%</b>
+              <small>{weight}% weight</small>
+            </div>
+          ))}
+        </article>
+
+        <article className="card results-boundary">
+          <CircleHelp />
+          <p>
+            <b>Evidence boundary:</b> Results reflect observed scan, inventory, and saved evidence.
+            Unknown internal PKI, code signing, databases, key stores, and vendor systems remain evidence gaps until collected.
+          </p>
+        </article>
+      </section>
+    </>
+  );
+}
+
+function PlanWorkspace({ data, scans, scores, profile, qdayScenario }) {
+  const legacySeedIds = new Set(["rsa-gateway", "hybrid-vpn", "root-hierarchy"]);
+  const [actions, setActions] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("quantumsentinel-remediation-actions") || "null");
+      return Array.isArray(stored) ? stored.filter((action) => !legacySeedIds.has(action.id)) : [];
+    } catch {
+      return [];
+    }
+  });
+  const evidenceActions = useMemo(() => (data?.assets || [])
+    .filter((asset) => !["HYBRID", "QUANTUM-SAFE"].includes(asset.cls))
+    .map((asset) => {
+      const assetName = asset.hostname || asset.name || String(asset.id);
+      const sourceScan = scans.find((scan) => {
+        const directHost = scan.target?.host ?? scan.request?.host;
+        const observations = scan.result?.observations || [];
+        return directHost === assetName || observations.some((observation) => observation.host === assetName);
+      });
+      const scanType = sourceScan?.type === "device"
+        ? "This device"
+        : sourceScan?.type === "discovery"
+          ? "Authorized network"
+          : sourceScan?.type === "tls"
+            ? "Website"
+            : "Imported evidence";
+      return {
+        id: `evidence-${asset.id}`,
+        title: `Modernize ${assetName}`,
+        asset: assetName,
+        scanType,
+        owner: "Unassigned",
+        due: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
+        status: "Planned",
+        urgency: Number(asset.risk) || 50,
+        target: asset.migration || "Define a hybrid or post-quantum target state",
+        evidenceNeeded: "Owner approval, implementation record, updated CBOM, and post-change scan evidence.",
+      };
+    }), [data, scans]);
+  const [sortBy, setSortBy] = useState("urgency");
+  const [planOpen, setPlanOpen] = useState(false);
+  const [selectedAction, setSelectedAction] = useState(null);
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [planName, setPlanName] = useState("Critical systems migration");
+  const [planOwner, setPlanOwner] = useState("");
+  const [planDeadline, setPlanDeadline] = useState("2026-12-31");
+  const statusOrder = { Blocked: 0, "In progress": 1, Planned: 2, Completed: 3 };
+  const allActions = [...actions, ...evidenceActions.filter((item) => !actions.some((action) => action.asset === item.asset))];
+  const sortedActions = [...allActions].sort((a, b) => {
+    if (sortBy === "due") return a.due.localeCompare(b.due);
+    if (sortBy === "status") return (statusOrder[a.status] ?? 4) - (statusOrder[b.status] ?? 4);
+    if (sortBy === "owner") return a.owner.localeCompare(b.owner);
+    return b.urgency - a.urgency;
+  });
+  const openCount = allActions.filter(action => action.status !== "Completed").length;
+  const progressCount = allActions.filter(action => action.status === "In progress").length;
+  const completedCount = allActions.filter(action => action.status === "Completed").length;
+  const brief = deriveMigrationBrief(scores, data, profile, qdayScenario, scans);
+  const primaryReport = buildReportRecord(REPORT_TYPES[3], scores, data, profile, qdayScenario, scans);
+  const openReport = type => setSelectedReport(buildReportRecord(type, scores, data, profile, qdayScenario, scans));
+
+  useEffect(() => {
+    localStorage.setItem("quantumsentinel-remediation-actions", JSON.stringify(actions));
+  }, [actions]);
+
+  const createPlan = (event) => {
+    event.preventDefault();
+    const newAction = {
+      id: `plan-${Date.now()}`,
+      title: planName.trim(),
+      asset: "Organization-wide",
+      owner: planOwner.trim() || "Unassigned",
+      due: planDeadline,
+      status: "Planned",
+      scanType: "Manual plan",
+      urgency: 75,
+      target: "Inventory, pilot, and migrate priority cryptography",
+      evidenceNeeded: "Approved scope, pilot result, updated CBOM, and validation scan.",
+    };
+    setActions(current => [newAction, ...current]);
+    setPlanOpen(false);
+    setSelectedAction(newAction);
+  };
+
+  return (
+    <>
+      <PageTitle
+        title="Plan"
+        subtitle="Prioritized migration path, owner queue, and export-ready plan."
+      >
+        <button className="primary" onClick={() => setPlanOpen(true)}>
+          <Wrench />
+          Create action
+        </button>
+        <button className="secondary" onClick={() => downloadReportPdf(primaryReport)}>
+          <FileDown />
+          Download PQC migration plan
+        </button>
+      </PageTitle>
+      <section className="plan-layout">
+        <article className="card plan-program">
+          <div className="plan-program-copy">
+            <span className="eyebrow">Decision state</span>
+            <h2>{brief.briefStatus}</h2>
+            <p>{brief.nextAction}</p>
+          </div>
+          <ScoreRing score={Number.isFinite(brief.readinessScore) ? brief.readinessScore : null} label="Readiness" />
+          <div className="plan-program-metrics">
+            <span><b>{openCount}</b><small>open actions</small></span>
+            <span><b>{progressCount}</b><small>in progress</small></span>
+            <span><b>{completedCount}</b><small>completed</small></span>
+            <span><b>{brief.qdayHorizon.readinessDeadline}</b><small>readiness checkpoint</small></span>
+          </div>
+        </article>
+
+        <article className="card plan-pathway">
+          <div className="card-heading">
+            <span><CalendarClock />Path forward</span>
+            <small>{brief.qdayHorizon.label} · {brief.qdayHorizon.display}</small>
+          </div>
+          <div className="pathway-grid compact">
+            <span><b>{brief.cbom.count}</b><small>CBOM components</small></span>
+            <span><b>{brief.criticalCount}</b><small>priority assets</small></span>
+            <span><b>{brief.hndlCount + brief.tnflCount}</b><small>HNDL/TNFL signals</small></span>
+          </div>
+          <div className="plan-timeline">
+            {MIGRATION_PHASES.slice(0, 4).map(([title, work], index) => (
+              <div key={title}>
+                <span className="step-number">{index + 1}</span>
+                <b>{title}</b>
+                <small>{work}</small>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card plan-briefs">
+          <div className="card-heading">
+            <span><FileText />Briefs and decisions</span>
+            <small>{scores.confidence.level} evidence confidence</small>
+          </div>
+          <div className="decision-list compact">
+            {brief.decisionRequired.map(item => (
+              <div key={item.title}>
+                <b>{item.title}</b>
+                <span>{item.owner}</span>
+                <p>{item.decision}</p>
+                <small>Due {item.due}</small>
+              </div>
+            ))}
+          </div>
+          <div className="plan-export-list">
+            {REPORT_TYPES.map(type => (
+              <button className="secondary" key={type.id} onClick={() => openReport(type)}>
+                <FileText />
+                {type.title}
+              </button>
+            ))}
+          </div>
+        </article>
+
+        <article className="card plan-queue">
+          <div className="card-heading">
+            <span><Wrench />Migration queue</span>
+            <label className="queue-sort">Sort by
+              <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort migration queue">
+                <option value="urgency">Urgency</option>
+                <option value="due">Due date</option>
+                <option value="status">Status</option>
+                <option value="owner">Owner</option>
+              </select>
+            </label>
+          </div>
+          <div className="plan-action-list">
+            {sortedActions.length ? sortedActions.slice(0, 8).map((action, index) => (
+              <button key={action.id} onClick={() => setSelectedAction(action)}>
+                <span className="step-number">{index + 1}</span>
+                <span>
+                  <b>{action.title}</b>
+                  <small>{action.asset} · {action.scanType || "Manual plan"}</small>
+                </span>
+                <span>{action.owner}</span>
+                <span>{new Date(`${action.due}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                <i className={`status-pill ${action.status.toLowerCase().replace(" ", "-")}`}>{action.status}</i>
+              </button>
+            )) : <p className="empty-scans">No migration actions yet. Findings from completed scans will appear here.</p>}
+          </div>
+        </article>
+      </section>
+      {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New action</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={() => setPlanOpen(false)} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input value={planOwner} onChange={event => setPlanOwner(event.target.value)} placeholder="Name or team" /></label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={() => setPlanOpen(false)}>Cancel</button><button type="submit" className="primary"><Check />Add to queue</button></div></form></div>}
+      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Migration action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close migration action details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download action PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div><div><dt>Evidence needed</dt><dd>{selectedAction.evidenceNeeded || evidenceNeededForAction(selectedAction)}</dd></div></dl><p><b>Planning boundary:</b> Completion requires implementation evidence, validation evidence, updated CBOM evidence, and a rescan.</p></aside>}
+      {selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Export package</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><h3>Decision state</h3><div className="drawer-brief"><b>{selectedReport.brief.briefStatus}</b><p>{selectedReport.brief.nextAction}</p></div><h3>Report sections</h3><div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}
+    </>
+  );
+}
+
+function Settings({ profile, qdayScenario, setQdayScenario, theme, toggleTheme, setActive, onboardingVisible, setOnboardingVisible }) {
+  const horizon = QDAY_SCENARIOS[qdayScenario] || QDAY_SCENARIOS.ionq;
+  const horizonDisplay = formatHorizon(daysUntil(horizon.date));
+  return (
+    <>
+      <PageTitle
+        title="Settings"
+        subtitle="Application preferences and setup controls."
+      />
+      <section className="settings-layout">
+        <article className="card settings-card">
+          <div className="card-heading">
+            <span><Building2 />Organization setup</span>
+          </div>
+          <p>{isProfileComplete(profile) ? `${profile.name} · ${profile.industry} · ${profile.geography}` : "Organization setup is incomplete."}</p>
+          <label className="settings-switch">
+            <span>
+              Show Onboarding tab
+              <small>Hide it after setup, or reveal it when setup needs review.</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={!isProfileComplete(profile) || onboardingVisible}
+              disabled={!isProfileComplete(profile)}
+              onChange={(event) => setOnboardingVisible(event.target.checked)}
+            />
+          </label>
+          <button className="secondary" onClick={() => setActive(ROUTES.onboarding)}>
+            <Building2 />
+            Open onboarding
+          </button>
+        </article>
+        <article className="card settings-card">
+          <div className="card-heading">
+            <span><CalendarClock />Q-Day horizon</span>
+          </div>
+          <p>{horizon.label}: {horizonDisplay.primary} {horizonDisplay.secondary} remaining.</p>
+          <label>
+            Planning scenario
+            <select value={qdayScenario} onChange={(event) => setQdayScenario(event.target.value)}>
+              <option value="ionq">IonQ 2029</option>
+              <option value="conservative">Conservative 2032</option>
+              <option value="accelerated">Accelerated 2028</option>
+            </select>
+          </label>
+        </article>
+        <article className="card settings-card">
+          <div className="card-heading">
+            <span><Settings2 />Display</span>
+          </div>
+          <p>Current theme: {theme}.</p>
+          <button className="secondary" onClick={toggleTheme}>
+            {theme === "light" ? <Moon /> : <Sun />}
+            Switch to {theme === "light" ? "dark" : "light"}
+          </button>
+        </article>
+      </section>
+    </>
+  );
 }
 
 export default function App() {
   const [active, setActive] = useState(() =>
-    savedProfile().name ? "Scan" : "Overview",
+    isProfileComplete(savedProfile()) ? ROUTES.overview : ROUTES.onboarding,
   );
   const [data, setData] = useState(null);
   const [scans, setScans] = useState(FALLBACK_SCANS);
   const [profile, setProfile] = useState(savedProfile);
-  const [profileOpen, setProfileOpen] = useState(() => !savedProfile().name);
+  const [qdayScenario, setQdayScenario] = useState(() => localStorage.getItem("quantumSentinel.qdayScenario") || "ionq");
+  const [onboardingVisible, setOnboardingVisible] = useState(() => localStorage.getItem("quantumSentinel.onboardingVisible") === "true");
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem("quantumSentinel.theme");
     if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
@@ -2320,6 +3511,28 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("quantumSentinel.theme", theme);
   }, [theme]);
+  useEffect(() => {
+    localStorage.setItem("quantumSentinel.qdayScenario", qdayScenario);
+  }, [qdayScenario]);
+  useEffect(() => {
+    localStorage.setItem("quantumSentinel.onboardingVisible", String(onboardingVisible));
+  }, [onboardingVisible]);
+  useEffect(() => {
+    const legacyRoutes = {
+      Overview: ROUTES.overview,
+      Scan: ROUTES.collect,
+      Exposure: ROUTES.results,
+      Remediation: ROUTES.plan,
+      Reports: ROUTES.plan,
+      "Q-Day Readiness": ROUTES.results,
+      "Crypto Inventory": ROUTES.results,
+      "Risk Findings": ROUTES.results,
+      "Briefs & Exports": ROUTES.plan,
+      "Quantum Context": ROUTES.learn,
+      Settings: ROUTES.settings,
+    };
+    if (legacyRoutes[active]) setActive(legacyRoutes[active]);
+  }, [active]);
   const refreshEvidence = useCallback(async () => {
     const [d, j] = await Promise.all([loadApplianceData(), loadProbeJobs()]);
       setData(d);
@@ -2329,50 +3542,61 @@ export default function App() {
     refreshEvidence();
   }, [refreshEvidence]);
   const scores = useMemo(() => deriveQuantumScores(data || {}), [data]);
+  const saveProfile = useCallback((next) => {
+    setProfile(next);
+    localStorage.setItem(
+      "quantumSentinel.organizationProfile",
+      JSON.stringify(next),
+    );
+  }, []);
   const page = useMemo(() => {
-    if (active === "Overview")
+    if (active === ROUTES.onboarding)
+      return <Onboarding profile={profile} onSave={saveProfile} setActive={setActive} qdayScenario={qdayScenario} scans={scans} />;
+    if (active === ROUTES.overview)
       return (
         <Overview
           data={data}
           scores={scores}
           scans={scans}
           setActive={setActive}
-          openProfile={() => setProfileOpen(true)}
+          profile={profile}
+          qdayScenario={qdayScenario}
+          setQdayScenario={setQdayScenario}
         />
       );
-    if (active === "Quantum Context") return <QuantumContext />;
-    if (active === "Q-Day Readiness") return <Readiness scores={scores} />;
-    if (active === "Scan")
+    if (active === ROUTES.learn) return <QuantumContext />;
+    if (active === ROUTES.settings)
+      return (
+        <Settings
+          profile={profile}
+          qdayScenario={qdayScenario}
+          setQdayScenario={setQdayScenario}
+          theme={theme}
+          toggleTheme={() => setTheme(current => current === "light" ? "dark" : "light")}
+          setActive={setActive}
+          onboardingVisible={onboardingVisible}
+          setOnboardingVisible={setOnboardingVisible}
+        />
+      );
+    if (active === ROUTES.collect)
       return <Scan scans={scans} setScans={setScans} setActive={setActive} onEvidenceSaved={refreshEvidence} />;
-    if (active === "Exposure") return <Exposure data={data} scores={scores} />;
-    if (active === "Remediation") return <Remediation data={data} scans={scans} />;
-    return <Reports scores={scores} data={data} />;
-  }, [active, data, scores, scans, refreshEvidence]);
-  const saveProfile = (next) => {
-    setProfile(next);
-    localStorage.setItem(
-      "quantumSentinel.organizationProfile",
-      JSON.stringify(next),
-    );
-    setProfileOpen(false);
-  };
+    if (active === ROUTES.results) return <ResultsWorkspace data={data} scores={scores} setActive={setActive} />;
+    if (active === ROUTES.inventory || active === ROUTES.findings || active === ROUTES.readiness)
+      return <ResultsWorkspace data={data} scores={scores} setActive={setActive} />;
+    if (active === ROUTES.plan || active === ROUTES.exports)
+      return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} />;
+    return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} />;
+  }, [active, data, profile, qdayScenario, saveProfile, scores, scans, refreshEvidence, theme, onboardingVisible]);
   return (
-    <div
-      className={`app ${profileOpen && active === "Overview" ? "profile-open" : ""}`}
-    >
+    <div className="app">
       <Header
         active={active}
         setActive={setActive}
         theme={theme}
+        profileComplete={isProfileComplete(profile)}
+        onboardingVisible={onboardingVisible}
         toggleTheme={() => setTheme(current => current === "light" ? "dark" : "light")}
       />
-      {profileOpen && active === "Overview" && (
-        <OrganizationProfile
-          initialProfile={profile}
-          onSave={saveProfile}
-          onClose={() => setProfileOpen(false)}
-        />
-      )}
       <main>{page}</main>
       <footer>
         QuantumSentinel · Evidence, not hype.{" "}

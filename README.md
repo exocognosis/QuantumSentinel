@@ -7,9 +7,13 @@ Open-source local scanner that discovers quantum-vulnerable crypto, builds an ev
 [![CI](https://github.com/exocognosis/QuantumSentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/exocognosis/QuantumSentinel/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/exocognosis/QuantumSentinel?style=social)](https://github.com/exocognosis/QuantumSentinel/stargazers)
 
-![QuantumSentinel demo](docs/demo/quantumsentinel-demo.gif)
+<video src="docs/demo/quantumsentinel-demo.mp4" controls muted playsinline width="960">
+  Watch the short demo: docs/demo/quantumsentinel-demo.mp4
+</video>
 
-Watch the short demo: [docs/demo/quantumsentinel-demo.mp4](docs/demo/quantumsentinel-demo.mp4)
+If the video does not render, view the GIF preview:
+
+![QuantumSentinel demo](docs/demo/quantumsentinel-demo.gif)
 
 ## Get Started In 30 Seconds
 

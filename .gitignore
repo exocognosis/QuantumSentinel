@@ -12,6 +12,7 @@ node_modules.*
 node_modules*/
 .codex-quarantine/
 audit-captures/
+docs/demo/tmp/
 dist
 dist-ssr
 *.local

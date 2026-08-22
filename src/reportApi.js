@@ -8,152 +8,7 @@ export const REPORT_TYPES = [
   { id: "full", title: "Full Evidence Package" },
 ];
 
-export const reportFallbackReports = [
-  {
-    reportId: "fallback-executive",
-    type: "executive",
-    title: "Executive",
-    generatedAt: "2026-06-06T15:00:00.000Z",
-    scope: { assets: 18, criticalAssets: 4, frameworks: 4 },
-    summary: { criticalAssets: 4, shorCritical: 8, quantumSafe: 5, openFindings: 5 },
-    sections: [
-      {
-        id: "posture",
-        title: "Posture",
-        summary: "Priority exposure remains concentrated in TLS, VPN, PKI, and OT cryptography.",
-        items: ["4 critical assets", "8 Shor-critical assets", "5 open remediation findings"],
-        raw: {
-          title: "Posture",
-          summary: "Priority exposure remains concentrated in TLS, VPN, PKI, and OT cryptography.",
-          items: ["4 critical assets", "8 Shor-critical assets", "5 open remediation findings"],
-        },
-      },
-      {
-        id: "actions",
-        title: "Actions",
-        summary: "Immediate work centers on internet edge and trust-chain migration.",
-        items: ["Migrate RSA TLS paths", "Move CA signing to ML-DSA", "Queue OT hardware refresh"],
-        raw: {
-          title: "Actions",
-          summary: "Immediate work centers on internet edge and trust-chain migration.",
-          items: ["Migrate RSA TLS paths", "Move CA signing to ML-DSA", "Queue OT hardware refresh"],
-        },
-      },
-    ],
-    evidenceRefs: [
-      { id: "asset:api-gateway-prod-01", label: "api-gateway-prod-01", type: "asset" },
-      { id: "finding:fallback-ca-root-trust", label: "CA root signing chain", type: "finding" },
-      { id: "probe:fallback-tls-gateway", label: "TLS Handshake Probe", type: "probe" },
-    ],
-    raw: {},
-  },
-  {
-    reportId: "fallback-compliance",
-    type: "compliance",
-    title: "Compliance",
-    generatedAt: "2026-06-06T15:05:00.000Z",
-    scope: { frameworks: 4, controls: 12 },
-    summary: { red: 2, amber: 2, green: 0, controlsAtRisk: 7 },
-    sections: [
-      {
-        id: "frameworks",
-        title: "Frameworks",
-        summary: "NSM-10 and DORA remain red until inventory and migration evidence are complete.",
-        items: ["NSM-10: RED", "DORA: RED", "PCI DSS: AMBER", "CMMC: AMBER"],
-        raw: {
-          title: "Frameworks",
-          summary: "NSM-10 and DORA remain red until inventory and migration evidence are complete.",
-          items: ["NSM-10: RED", "DORA: RED", "PCI DSS: AMBER", "CMMC: AMBER"],
-        },
-      },
-    ],
-    evidenceRefs: [
-      { id: "control:nsm-10-inventory", label: "NSM-10 inventory", type: "control" },
-      { id: "control:dora-art-9", label: "DORA Art. 9.2 register", type: "control" },
-    ],
-    raw: {},
-  },
-  {
-    reportId: "fallback-remediation",
-    type: "remediation",
-    title: "Remediation",
-    generatedAt: "2026-06-06T15:10:00.000Z",
-    scope: { findings: 5, owners: 4 },
-    summary: { openCritical: 2, overdue: 1, dueSoon: 1, inProgress: 1, closed: 2 },
-    sections: [
-      {
-        id: "queue",
-        title: "Queue",
-        summary: "Edge and PKI owners carry the current critical path.",
-        items: ["edge-team: gateway TLS migration", "pki-team: CA signing migration", "ot-ops: hardware refresh"],
-        raw: {
-          title: "Queue",
-          summary: "Edge and PKI owners carry the current critical path.",
-          items: ["edge-team: gateway TLS migration", "pki-team: CA signing migration", "ot-ops: hardware refresh"],
-        },
-      },
-    ],
-    evidenceRefs: [
-      { id: "finding:fallback-api-gateway-hndl", label: "Internet gateway RSA path", type: "finding" },
-      { id: "finding:fallback-ca-root-trust", label: "CA root signing chain", type: "finding" },
-    ],
-    raw: {},
-  },
-  {
-    reportId: "fallback-cbom",
-    type: "cbom",
-    title: "CBOM",
-    generatedAt: "2026-06-06T15:15:00.000Z",
-    scope: { assets: 18, algorithms: 7, protocols: 6 },
-    summary: { algorithms: 7, deprecated: 3, hybrid: 2, quantumSafe: 3 },
-    sections: [
-      {
-        id: "inventory",
-        title: "Inventory",
-        summary: "Classical cryptography remains present across edge, VPN, PKI, and OT records.",
-        items: ["RSA-2048", "ECDH-P256", "RSA-4096", "X25519+ML-KEM", "ML-DSA"],
-        raw: {
-          title: "Inventory",
-          summary: "Classical cryptography remains present across edge, VPN, PKI, and OT records.",
-          items: ["RSA-2048", "ECDH-P256", "RSA-4096", "X25519+ML-KEM", "ML-DSA"],
-        },
-      },
-    ],
-    evidenceRefs: [
-      { id: "cbom:assets", label: "Asset cryptography inventory", type: "cbom" },
-      { id: "drift:history", label: "CBOM drift history", type: "drift" },
-    ],
-    raw: {},
-  },
-  {
-    reportId: "fallback-full",
-    type: "full",
-    title: "Full Evidence Package",
-    generatedAt: "2026-06-06T15:20:00.000Z",
-    scope: { reports: 4, evidenceRefs: 8 },
-    summary: { sections: 6, evidenceRefs: 8, findings: 5, assets: 18 },
-    sections: [
-      {
-        id: "package",
-        title: "Package",
-        summary: "Combined executive, compliance, remediation, CBOM, probe, drift, and finding evidence.",
-        items: ["Executive summary", "Compliance controls", "Remediation queue", "CBOM inventory", "Probe evidence"],
-        raw: {
-          title: "Package",
-          summary: "Combined executive, compliance, remediation, CBOM, probe, drift, and finding evidence.",
-          items: ["Executive summary", "Compliance controls", "Remediation queue", "CBOM inventory", "Probe evidence"],
-        },
-      },
-    ],
-    evidenceRefs: [
-      { id: "report:fallback-executive", label: "Executive report", type: "report" },
-      { id: "report:fallback-compliance", label: "Compliance report", type: "report" },
-      { id: "report:fallback-remediation", label: "Remediation report", type: "report" },
-      { id: "report:fallback-cbom", label: "CBOM report", type: "report" },
-    ],
-    raw: {},
-  },
-];
+export const unavailableReports = [];
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -301,13 +156,12 @@ async function fetchJson(fetcher, path, options = {}) {
   return response.json();
 }
 
-function fallbackReports() {
-  return clone(reportFallbackReports);
+function unavailableReportList() {
+  return clone(unavailableReports);
 }
 
-function fallbackReport(type) {
-  const normalizedType = normalizeType(type);
-  return clone(reportFallbackReports.find((report) => report.type === normalizedType) ?? reportFallbackReports[0]);
+function unavailableReport(type) {
+  return null;
 }
 
 export function normalizeReport(report, index = 0, defaultType = "executive") {
@@ -334,7 +188,7 @@ export async function loadReports(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    const reports = fallbackReports();
+    const reports = unavailableReportList();
     return { reports, count: reports.length };
   }
 
@@ -349,7 +203,7 @@ export async function loadReports(options = {}) {
       count: Number(payload?.count ?? payload?.data?.count ?? reports.length) || reports.length,
     };
   } catch {
-    const reports = fallbackReports();
+    const reports = unavailableReportList();
     return { reports, count: reports.length };
   }
 }
@@ -360,7 +214,7 @@ export async function loadReport(type, options = {}) {
   const normalizedType = normalizeType(type);
 
   if (typeof fetcher !== "function") {
-    return fallbackReport(normalizedType);
+    return unavailableReport(normalizedType);
   }
 
   try {
@@ -370,7 +224,7 @@ export async function loadReport(type, options = {}) {
     });
     return normalizeReport(getReportPayload(payload), 0, normalizedType);
   } catch {
-    return fallbackReport(normalizedType);
+    return unavailableReport(normalizedType);
   }
 }
 
@@ -379,5 +233,5 @@ export default {
   loadReport,
   loadReports,
   normalizeReport,
-  reportFallbackReports,
+  unavailableReports,
 };

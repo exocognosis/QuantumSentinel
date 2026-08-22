@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
 
-import { ALGO_DIST, ALERTS, ASSETS, COMPLIANCE, TREND_DATA } from "../src/mockData.js";
 import { createApiServer } from "./app.js";
 
 const listen = async () => {
@@ -25,16 +24,16 @@ const getJson = async (baseUrl, path) => {
   return { response, body };
 };
 
-test("serves health and seed-backed collection endpoints with CORS", async () => {
+test("serves health and empty collection endpoints with CORS before scans", async () => {
   const api = await listen();
 
   try {
     const expectations = [
-      ["/api/assets", ASSETS],
-      ["/api/alerts", ALERTS],
-      ["/api/compliance", COMPLIANCE],
-      ["/api/trends", TREND_DATA],
-      ["/api/algorithms", ALGO_DIST],
+      ["/api/assets", []],
+      ["/api/alerts", []],
+      ["/api/compliance", []],
+      ["/api/trends", []],
+      ["/api/algorithms", []],
     ];
 
     const health = await getJson(api.baseUrl, "/api/health");
@@ -55,7 +54,7 @@ test("serves health and seed-backed collection endpoints with CORS", async () =>
   }
 });
 
-test("derives a stable portfolio summary from the asset, alert, compliance, and trend seeds", async () => {
+test("derives an empty portfolio summary before scans", async () => {
   const api = await listen();
 
   try {
@@ -65,36 +64,36 @@ test("derives a stable portfolio summary from the asset, alert, compliance, and 
     assert.deepEqual(body, {
       data: {
         assets: {
-          total: 15,
-          critical: 8,
-          high: 4,
-          medium: 1,
-          monitor: 2,
-          shorCritical: 12,
-          quantumSafe: 1,
-          hybrid: 1,
-          deprecated: 1,
-          noPfs: 8,
-          averageRisk: 77,
+          total: 0,
+          critical: 0,
+          high: 0,
+          medium: 0,
+          monitor: 0,
+          shorCritical: 0,
+          quantumSafe: 0,
+          hybrid: 0,
+          deprecated: 0,
+          noPfs: 0,
+          averageRisk: 0,
         },
         alerts: {
-          total: 7,
-          critical: 3,
-          high: 2,
-          medium: 1,
-          info: 1,
+          total: 0,
+          critical: 0,
+          high: 0,
+          medium: 0,
+          info: 0,
         },
         compliance: {
-          averagePct: 44,
-          red: 2,
-          amber: 3,
-          green: 1,
+          averagePct: 0,
+          red: 0,
+          amber: 0,
+          green: 0,
         },
         trends: {
-          latestRisk: 79,
-          latestSafe: 21,
-          riskDelta: -15,
-          safeDelta: 15,
+          latestRisk: 0,
+          latestSafe: 0,
+          riskDelta: 0,
+          safeDelta: 0,
         },
       },
     });
@@ -103,56 +102,22 @@ test("derives a stable portfolio summary from the asset, alert, compliance, and 
   }
 });
 
-test("generates deterministic CBOM entries and aggregate crypto posture", async () => {
+test("generates an empty CBOM before scans", async () => {
   const api = await listen();
 
   try {
     const { response, body } = await getJson(api.baseUrl, "/api/cbom");
 
     assert.equal(response.status, 200);
-    assert.equal(body.count, ASSETS.length);
+    assert.equal(body.count, 0);
     assert.deepEqual(body.summary, {
-      totalComponents: 15,
-      vulnerableComponents: 13,
-      pfsEnabled: 7,
-      requiresHardwareRefresh: 2,
-      migrationTargets: {
-        "ML-KEM-768 + ML-DSA-65": 2,
-        "ML-KEM-1024": 1,
-        "ML-DSA-87": 1,
-        "ML-KEM-768": 4,
-        "REQUIRES HW REFRESH": 2,
-        "ML-DSA-65": 1,
-        "ML-DSA-65 + ML-KEM-768": 2,
-        "None required": 1,
-        "Full PQC when ready": 1,
-      },
+      totalComponents: 0,
+      vulnerableComponents: 0,
+      pfsEnabled: 0,
+      requiresHardwareRefresh: 0,
+      migrationTargets: {},
     });
-    assert.deepEqual(body.data[0], {
-      componentId: "asset-1",
-      assetId: 1,
-      hostname: "api-gateway-prod-01",
-      assetType: "Load Balancer",
-      networkSegment: "DMZ",
-      cryptography: {
-        algorithm: "RSA-2048",
-        protocol: "TLS 1.3",
-        classification: "SHOR-CRITICAL",
-        perfectForwardSecrecy: false,
-        certificateExpiration: "2026-09-14",
-      },
-      risk: {
-        hndl: 91,
-        tnfl: 72,
-        score: 94,
-        priority: "CRITICAL",
-      },
-      migration: {
-        target: "ML-KEM-768 + ML-DSA-65",
-        complexity: "MEDIUM",
-        hardwareRefreshRequired: false,
-      },
-    });
+    assert.deepEqual(body.data, []);
   } finally {
     await api.close();
   }
@@ -181,7 +146,7 @@ test("handles preflight, not found, and SSE event streams", async () => {
 
     const chunk = new TextDecoder().decode(value);
     assert.match(chunk, /^event: summary\n/m);
-    assert.match(chunk, /"assets":\{"total":15/);
+    assert.match(chunk, /"assets":\{"total":0/);
   } finally {
     await api.close();
   }

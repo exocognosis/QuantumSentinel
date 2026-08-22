@@ -17,6 +17,14 @@ import {
 } from "./probeScheduler.js";
 import { getProbeJob, resetProbeJobs } from "./probeEngine.js";
 
+const TEST_DEVICE_PROBE = {
+  mode: "device",
+  scope: "ipv4",
+  ports: [443],
+  discoverActivePorts: false,
+  timeoutMs: 100,
+};
+
 async function withTempStore(testName, fn) {
   const dir = await mkdtemp(join(tmpdir(), `quantumsentinel-monitor-${testName}-`));
   const datastore = await createDatastore({
@@ -110,7 +118,9 @@ test("creates monitor policies with normalized cadence and probe request validat
     assert.deepEqual(policy.probeRequest, {
       mode: "discovery",
       hosts: ["example.com", "127.0.0.1"],
+      ports: [443],
       port: 443,
+      concurrency: 4,
       timeoutMs: 1000,
     });
     assert.deepEqual(await datastore.listMonitorPolicies(), [policy]);
@@ -123,7 +133,7 @@ test("rejects unsafe monitor schedules and invalid discovery probe requests", as
       () => createMonitorPolicy(datastore, {
         name: "Too frequent",
         intervalSeconds: 30,
-        probeRequest: { mode: "simulate", assetId: 1 },
+        probeRequest: { ...TEST_DEVICE_PROBE },
       }),
       /intervalSeconds must be at least 60/,
     );
@@ -148,7 +158,7 @@ test("runs monitor policies immediately and persists job/result metadata", async
     const policy = await createMonitorPolicy(datastore, {
       name: "Seed asset check",
       intervalSeconds: 120,
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     }, {
       now: () => "2026-06-03T12:00:00.000Z",
     });
@@ -159,7 +169,7 @@ test("runs monitor policies immediately and persists job/result metadata", async
 
     assert.equal(job.id, "probe-1");
     assert.equal(job.status, "completed");
-    assert.equal(job.target.assetId, 1);
+    assert.deepEqual(job.target.hosts, ["127.0.0.1"]);
     assert.deepEqual(await datastore.getProbeJob(job.id), job);
     assert.deepEqual(getProbeJob(job.id), job);
 
@@ -285,28 +295,28 @@ test("selects due monitor policies and skips disabled, future, and running polic
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await createMonitorPolicy(datastore, {
       name: "Future monitor",
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:10:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 2 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await createMonitorPolicy(datastore, {
       name: "Disabled monitor",
       enabled: false,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 3 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     const running = await createMonitorPolicy(datastore, {
       name: "Already running",
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 4 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await datastore.createMonitorRun({
       policyId: running.id,
@@ -330,7 +340,7 @@ test("rejects monitor runs when the policy already has a running run", async () 
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await datastore.createMonitorRun({
       policyId: policy.id,
@@ -355,14 +365,14 @@ test("runs due monitor policies up to maxRuns and records scheduled runs", async
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     const second = await createMonitorPolicy(datastore, {
       name: "Second due",
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 2 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
 
     const tick = await runDueMonitorPolicies(datastore, {
@@ -388,7 +398,7 @@ test("monitor routes create, list, detail, run, and report missing policies", as
     const created = await postJson(api.baseUrl, "/api/monitors", {
       name: "Route monitor",
       intervalSeconds: 60,
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
 
     assert.equal(created.response.status, 201);
@@ -453,14 +463,14 @@ test("monitor health aggregates policy and run lifecycle state", async () => {
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await createMonitorPolicy(datastore, {
       name: "Future enabled",
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:30:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 2 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await datastore.createMonitorRun({
       policyId: "monitor-1",
@@ -566,14 +576,14 @@ test("monitor scheduler tick runs due policies deterministically and records las
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:01:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     await createMonitorPolicy(datastore, {
       name: "Still future",
       enabled: true,
       intervalSeconds: 120,
       nextRunAt: "2026-06-03T12:10:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 2 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
     const scheduler = createMonitorScheduler({
       datastore,
@@ -603,7 +613,7 @@ test("scheduler routes expose status, config, tick, start, and stop", async () =
       enabled: true,
       intervalSeconds: 60,
       nextRunAt: "2026-06-03T12:00:00.000Z",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
 
     const initial = await getJson(api.baseUrl, "/api/scheduler");
@@ -656,7 +666,7 @@ test("monitor routes return bad request for invalid create payloads", async () =
     const invalid = await postJson(api.baseUrl, "/api/monitors", {
       name: "Invalid",
       intervalSeconds: 59,
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { ...TEST_DEVICE_PROBE },
     });
 
     assert.equal(invalid.response.status, 400);

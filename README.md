@@ -39,20 +39,23 @@ Scan the publicly observable cryptographic posture of an explicitly authorized d
 npm run scan-domain -- example.com --ports 443,8443 --output example-qday.json --html example-qday.html
 ```
 
-Domain scans are limited to an allowlist of implicit-TLS service ports (`443`, `465`, `636`, `853`, `993`, `995`, `8443`, and `9443`), use strict connection timeouts, and do not crawl, exploit, or test general web vulnerabilities. Results describe the observed edge; CDNs, proxies, origin services, internal systems, runtime fallback, and third-party trust paths remain separate evidence boundaries.
+Domain scans are limited to an allowlist of implicit-TLS service ports (`443`, `465`, `636`, `853`, `993`, `995`, `8443`, and `9443`), use strict connection timeouts, and do not crawl, exploit, or test general web vulnerabilities. Results describe the observed edge; CDNs, proxies, origin services, internal systems, and third-party trust paths remain separate evidence boundaries.
 
 Public-sector or critical-infrastructure comparisons should be based on authorized, rate-limited observations and described as **external Q-Day posture**, not proof of an organization's internal security. A classical public edge warrants an internal inventory; it does not establish what that inventory will find.
 
 ## Product State
 
-QuantumSentinel runs as a local React dashboard backed by a Node API and persistent local datastore. It supports local assessment workflows, MVP demos, and API/client development. Treat scan output as assessment evidence, not as a certified compliance attestation.
+QuantumSentinel runs as a local React dashboard backed by a Node API and local datastore. A normal dashboard launch uses a clean session datastore, so prior scans do not appear on the next start. Assessment data comes from actual local device, public TLS, authorized network, or repository scans. Treat scan output as assessment evidence, not as a certified compliance attestation.
+
+For a guided demonstration, use [DEMO.md](DEMO.md).
+For release framing, use [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 Implemented capabilities:
 
 - Dashboard views for executive risk, topology, asset inventory, threats, compliance, API posture, probe activity, drift, monitor policies, and recent monitor runs.
 - API server for assets, alerts, compliance, trends, summary metrics, CBOM output, findings, probes, monitor policies, monitor run history, monitor health, and scheduler controls.
-- Persistent datastore under `.quantumsentinel/`, using Node SQLite when available with a JSON fallback path in the datastore layer.
-- Probe engine for seeded asset simulation, TLS endpoint inspection, and bounded TCP discovery sweeps.
+- Session datastore by default, with opt-in persistent storage under `.quantumsentinel/` when `QS_PERSIST_EVIDENCE=1` or `QS_DATASTORE_PATH` is set.
+- Probe engine for TLS endpoint inspection, local device inspection, and bounded TCP discovery sweeps.
 - Risk engine for cryptographic posture classification, HNDL/TNFL scoring, remediation guidance, finding generation, recomputation, and asset/portfolio drift detection.
 - Monitor policy model with enablement, cadence, next-run timestamps, manual runs, due-policy selection, scheduled-run primitives, duplicate-run guards, and run history.
 - Remediation/finding lifecycle slice covering finding ownership, lifecycle status, operator notes, remediation summaries, console surfacing, and datastore/API persistence.
@@ -74,14 +77,60 @@ npm start
 
 Open `http://127.0.0.1:5173`.
 
-The launcher starts both services and opens the dashboard. The API listens on `http://127.0.0.1:8787`; the web server proxies `/api` to that API. Set `HOST`, `PORT`, `WEB_PORT`, `QS_NO_OPEN=1`, or `QS_DATASTORE_PATH` when you need a different bind address, API port, dashboard port, browser behavior, or datastore file.
+The launcher starts both services and opens the dashboard. The API listens on `http://127.0.0.1:8787`; the web server proxies `/api` to that API. Set `HOST`, `PORT`, `WEB_PORT`, `QS_NO_OPEN=1`, `QS_PERSIST_EVIDENCE=1`, or `QS_DATASTORE_PATH` when you need a different bind address, API port, dashboard port, browser behavior, or datastore file.
 
-`npm start` resumes the current local assessment, including its scans, scores,
-findings, and reports. To start a clean isolated assessment without deleting or
-changing the existing evidence store, run:
+`npm start` starts a clean local assessment session. It does not load prior scan
+evidence from `.quantumsentinel/evidence.db`.
+
+To persist scan evidence across restarts, run:
 
 ```sh
-npm run fresh
+QS_PERSIST_EVIDENCE=1 npm start
+```
+
+To use a specific datastore file, run:
+
+```sh
+QS_DATASTORE_PATH=.quantumsentinel/evidence.db npm start
+```
+
+To test a fully isolated clean session without opening a browser, run:
+
+```sh
+QS_NO_OPEN=1 npm run fresh
+```
+
+## Demo Boundaries
+
+QuantumSentinel can be distributed as a demo product.
+Describe it as a local PQC and Q-Day assessment workflow.
+Do not describe it as a certification, formal compliance attestation, or full
+enterprise cryptographic inventory.
+
+Public website scans observe one public TLS endpoint.
+Device scans observe bounded loopback TCP/TLS services.
+Reachable non-TLS services appear as migration review components until follow-up evidence confirms the cryptographic component.
+Authorized network scans test only explicitly supplied hosts and bounded ports.
+Repository scans classify static source evidence.
+
+The Q-Day Readiness Score is a prioritization aid.
+It is not proof that an organization is quantum safe.
+
+## Reset And Uninstall
+
+Stop the app with `Ctrl+C`.
+
+Remove persistent evidence:
+
+```sh
+rm -rf .quantumsentinel
+```
+
+Remove a local checkout:
+
+```sh
+cd ..
+rm -rf QuantumSentinel
 ```
 
 ## Development Commands
@@ -126,9 +175,9 @@ Reports:
 
 Probe creation accepts a request body that identifies the probe mode:
 
-- Simulated asset probe: target a known local seed/datastore asset.
 - TLS probe: inspect a specific host and port with a bounded timeout.
 - Discovery probe: scan a bounded host list and port with a bounded timeout.
+- Device probe: inspect bounded localhost services on the current device.
 
 Monitors:
 
@@ -148,10 +197,11 @@ Scheduler:
 
 ## Local State
 
-- Runtime datastore files are written under `.quantumsentinel/`.
+- Runtime datastore files are session-only by default.
+- Persistent runtime datastore files are written under `.quantumsentinel/` only when `QS_PERSIST_EVIDENCE=1` or `QS_DATASTORE_PATH` is set.
 - `dist/` is generated by `npm run build` and served by `npm run web`.
 - `node_modules.*` directories are generated dependency backups and ignored.
-- Probe jobs, asset history, findings, CBOM snapshots, monitor policies, and monitor runs are persisted when the API is started with a datastore.
+- Probe jobs, asset history, findings, CBOM snapshots, monitor policies, and monitor runs persist only for the current session unless persistent storage is enabled.
 
 ## Product Gap
 

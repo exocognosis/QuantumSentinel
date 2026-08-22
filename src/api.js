@@ -83,7 +83,6 @@ function normalizeData(payloads, source) {
 
   return {
     source,
-    isFallback: source === "fallback",
     assets,
     alerts,
     compliance,
@@ -91,15 +90,10 @@ function normalizeData(payloads, source) {
     algorithms,
     summary,
     cbomUrl: getCbomUrl(),
-    ASSETS: assets,
-    ALERTS: alerts,
-    COMPLIANCE: compliance,
-    TREND_DATA: trends,
-    ALGO_DIST: algorithms,
   };
 }
 
-function fallbackData() {
+function emptyData(source = "unavailable") {
   return normalizeData(
     {
       assets: [],
@@ -109,7 +103,7 @@ function fallbackData() {
       algorithms: [],
       summary: {},
     },
-    "fallback",
+    source,
   );
 }
 
@@ -135,7 +129,7 @@ export async function loadApplianceData(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackData();
+    return emptyData();
   }
 
   try {
@@ -160,7 +154,7 @@ export async function loadApplianceData(options = {}) {
       "api",
     );
   } catch {
-    return fallbackData();
+    return emptyData();
   }
 }
 

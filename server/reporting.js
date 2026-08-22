@@ -1,4 +1,3 @@
-import { ALERTS, ASSETS, COMPLIANCE, TREND_DATA } from "../src/mockData.js";
 import { buildCbomFromAssets } from "./datastore.js";
 
 const REPORT_TYPES = [
@@ -114,7 +113,7 @@ function sortFindingsBySeverity(left, right) {
     || String(left.id).localeCompare(String(right.id));
 }
 
-function summarizeRemediationFallback(findings) {
+function summarizeFindingsRemediation(findings) {
   const openFindings = findings.filter((finding) => !TERMINAL_FINDING_STATUSES.has(finding.status));
 
   return {
@@ -173,29 +172,31 @@ function activeAlertsFromFindings(findings) {
 }
 
 async function loadReportContext(datastore) {
-  const assets = datastore ? await datastore.listAssets() : ASSETS;
+  const assets = datastore ? await datastore.listAssets() : [];
   const findings = datastore ? await datastore.listFindings() : [];
-  const alerts = datastore ? activeAlertsFromFindings(findings) : ALERTS;
+  const alerts = activeAlertsFromFindings(findings);
   const rawRemediationSummary = datastore
     ? await datastore.getRemediationSummary()
-    : summarizeRemediationFallback(findings);
+    : summarizeFindingsRemediation(findings);
   const remediationSummary = normalizeRemediationSummary(rawRemediationSummary, findings);
   const cbomSnapshots = datastore ? await datastore.listCbomSnapshots() : [];
   const monitorRuns = datastore ? await datastore.listMonitorRuns() : [];
   const cbom = buildCbomFromAssets(assets);
+  const compliance = [];
+  const trends = [];
 
   return {
-    source: datastore ? "datastore" : "seed",
+    source: datastore ? "datastore" : "none",
     assets,
     alerts,
-    compliance: COMPLIANCE,
-    trends: TREND_DATA,
+    compliance,
+    trends,
     findings,
     remediationSummary,
     cbomSnapshots,
     monitorRuns,
     cbom,
-    summary: deriveReportSummary({ assets, alerts, compliance: COMPLIANCE, trends: TREND_DATA }),
+    summary: deriveReportSummary({ assets, alerts, compliance, trends }),
   };
 }
 

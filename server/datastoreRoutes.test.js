@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { ASSETS } from "../test-fixtures/mockData.js";
 import { backfillProbeAssets, createApiServer, persistProbeResult } from "./app.js";
 import { createDatastore } from "./datastore.js";
 import { buildReport } from "./reporting.js";
 
 async function listen() {
   const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-routes-"));
-  const datastore = await createDatastore({ filePath: join(dir, "datastore.db") });
+  const datastore = await createDatastore({ filePath: join(dir, "datastore.db"), seedAssets: ASSETS });
   const server = createApiServer({ datastore });
 
   server.listen(0, "127.0.0.1");
@@ -47,7 +48,7 @@ test("serves datastore-backed asset detail and history routes", async () => {
     const history = await getJson(api.baseUrl, "/api/assets/1/history");
     assert.equal(history.response.status, 200);
     assert.equal(history.body.count, 1);
-    assert.equal(history.body.data[0].source, "seed");
+    assert.equal(history.body.data[0].source, "initial-import");
 
     const missing = await getJson(api.baseUrl, "/api/assets/999");
     assert.equal(missing.response.status, 404);
@@ -590,24 +591,27 @@ test("persists completed probe observations into asset history and findings", as
   const api = await listen();
 
   try {
+    const port = Number(new URL(api.baseUrl).port);
     const probeResponse = await fetch(`${api.baseUrl}/api/probes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ assetId: 1, mode: "simulate" }),
+      body: JSON.stringify({ mode: "device", scope: "ipv4", ports: [port], discoverActivePorts: false, timeoutMs: 100 }),
     });
     const probe = await probeResponse.json();
 
     assert.equal(probeResponse.status, 201);
     assert.equal(probe.data.status, "completed");
 
-    const history = await getJson(api.baseUrl, "/api/assets/1/history");
-    assert.equal(history.body.count, 3);
-    assert.equal(history.body.data[1].source, "probe");
-    assert.equal(history.body.data[2].source, "risk-engine");
+    const assets = await getJson(api.baseUrl, "/api/assets");
+    const observed = assets.body.data.find((asset) => asset.hostname === "127.0.0.1");
+    assert.ok(observed);
 
-    const findings = await getJson(api.baseUrl, "/api/findings?assetId=1");
-    assert.equal(findings.body.count, 2);
-    assert.equal(findings.body.data[0].source, "risk-engine");
+    const history = await getJson(api.baseUrl, `/api/assets/${observed.id}/history`);
+    assert.equal(history.body.count >= 1, true);
+    assert.equal(history.body.data.some((entry) => entry.source === "probe"), true);
+
+    const findings = await getJson(api.baseUrl, `/api/findings?assetId=${observed.id}`);
+    assert.equal(findings.body.count >= 1, true);
   } finally {
     await api.close();
   }

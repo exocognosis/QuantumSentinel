@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 import {
   appendFindingNote,
-  findingFallbackFindings,
   loadFindings,
   loadRemediationSummary,
   normalizeFinding,
@@ -176,7 +175,7 @@ test("loadRemediationSummary fetches and normalizes summary counters", async () 
   });
 });
 
-test("loadFindings and summary fall back to cloned local data when API is unavailable", async () => {
+test("loadFindings and summary return no evidence when API is unavailable", async () => {
   const findings = await loadFindings({
     fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
   });
@@ -186,13 +185,18 @@ test("loadFindings and summary fall back to cloned local data when API is unavai
     },
   });
 
-  assert.deepEqual(findings, findingFallbackFindings);
-  assert.notEqual(findings, findingFallbackFindings);
-  assert.equal(summary.openCritical > 0, true);
+  assert.deepEqual(findings, []);
+  assert.deepEqual(summary, {
+    openCritical: 0,
+    overdue: 0,
+    dueSoon: 0,
+    inProgress: 0,
+    remediatedClosed: 0,
+    total: 0,
+  });
 
-  findings[0].status = "MUTATED";
   const nextFindings = await loadFindings({ fetcher: undefined });
-  assert.equal(nextFindings[0].status, findingFallbackFindings[0].status);
+  assert.deepEqual(nextFindings, []);
 });
 
 test("normalizeFinding derives titles and remediation targets from asset-shaped records", () => {

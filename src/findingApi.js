@@ -1,121 +1,8 @@
-import { ASSETS as FALLBACK_ASSETS } from "./mockData.js";
-
 const FINDINGS_ENDPOINT = "/api/findings";
 const REMEDIATION_SUMMARY_ENDPOINT = "/api/remediation/summary";
 const DUE_SOON_DAYS = 14;
 
-export const findingFallbackFindings = [
-  {
-    id: "fallback-ca-root-trust",
-    assetId: "3",
-    assetName: "ca-root-internal",
-    severity: "CRITICAL",
-    type: "TNFL",
-    title: "CA root signing chain requires PQC migration",
-    description: "RSA-4096 root signing remains a trust forge exposure for future certificate impersonation.",
-    evidence: "PKIX chain uses RSA-4096 root certificate expiring 2031-06-30.",
-    source: "fallback",
-    status: "IN_PROGRESS",
-    owner: "pki-team",
-    dueAt: "2026-06-12T18:00:00.000Z",
-    priority: "CRITICAL",
-    remediation: { target: "ML-DSA-87" },
-    remediationTarget: "ML-DSA-87",
-    resolution: "",
-    updatedAt: "2026-06-06T15:20:00.000Z",
-    closedAt: null,
-    notes: [{ text: "Migration window requested with PKI owners.", author: "system" }],
-    asset: FALLBACK_ASSETS.find((asset) => asset.id === 3),
-  },
-  {
-    id: "fallback-api-gateway-hndl",
-    assetId: "1",
-    assetName: "api-gateway-prod-01",
-    severity: "CRITICAL",
-    type: "HNDL",
-    title: "Internet gateway exposes RSA key exchange path",
-    description: "Production gateway still presents a classical certificate path without PQC key establishment.",
-    evidence: "TLS asset classified SHOR-CRITICAL with PFS disabled.",
-    source: "fallback",
-    status: "OPEN",
-    owner: "edge-team",
-    dueAt: "2026-06-05T18:00:00.000Z",
-    priority: "CRITICAL",
-    remediation: { target: "ML-KEM-768 + ML-DSA-65" },
-    remediationTarget: "ML-KEM-768 + ML-DSA-65",
-    resolution: "",
-    updatedAt: "2026-06-06T14:35:00.000Z",
-    closedAt: null,
-    notes: [],
-    asset: FALLBACK_ASSETS.find((asset) => asset.id === 1),
-  },
-  {
-    id: "fallback-vpn-concentrator",
-    assetId: "2",
-    assetName: "vpn-concentrator-01",
-    severity: "HIGH",
-    type: "HNDL",
-    title: "VPN concentrator migration queued",
-    description: "IKEv2 path remains quantum-vulnerable and has downgrade exposure.",
-    evidence: "ECDH-P256 observed on perimeter VPN gateway.",
-    source: "fallback",
-    status: "TRIAGED",
-    owner: "network-team",
-    dueAt: "2026-06-20T18:00:00.000Z",
-    priority: "HIGH",
-    remediation: { target: "ML-KEM-1024" },
-    remediationTarget: "ML-KEM-1024",
-    resolution: "",
-    updatedAt: "2026-06-06T13:10:00.000Z",
-    closedAt: null,
-    notes: [{ text: "Awaiting client compatibility review.", author: "system" }],
-    asset: FALLBACK_ASSETS.find((asset) => asset.id === 2),
-  },
-  {
-    id: "fallback-ot-refresh",
-    assetId: "15",
-    assetName: "plc-boiler-ctrl-07",
-    severity: "CRITICAL",
-    type: "OT",
-    title: "OT controller requires hardware refresh",
-    description: "DES-56 controller has no viable cryptographic migration path.",
-    evidence: "Deprecated protocol and algorithm observed on OT segment.",
-    source: "fallback",
-    status: "ACCEPTED_RISK",
-    owner: "ot-ops",
-    dueAt: "2026-07-15T18:00:00.000Z",
-    priority: "CRITICAL",
-    remediation: { target: "REQUIRES HW REFRESH" },
-    remediationTarget: "REQUIRES HW REFRESH",
-    resolution: "Risk accepted until scheduled OT maintenance window.",
-    updatedAt: "2026-06-06T12:00:00.000Z",
-    closedAt: "2026-06-06T12:00:00.000Z",
-    notes: [{ text: "Accepted by OT risk owner.", author: "system" }],
-    asset: FALLBACK_ASSETS.find((asset) => asset.id === 15),
-  },
-  {
-    id: "fallback-pqc-pilot",
-    assetId: "13",
-    assetName: "api-gw-pqc-pilot",
-    severity: "LOW",
-    type: "PQC",
-    title: "PQC pilot confirmed",
-    description: "Hybrid key establishment is active on the pilot gateway.",
-    evidence: "X25519+ML-KEM negotiated successfully.",
-    source: "fallback",
-    status: "REMEDIATED",
-    owner: "edge-team",
-    dueAt: null,
-    priority: "LOW",
-    remediation: { target: "Full PQC when ready" },
-    remediationTarget: "Full PQC when ready",
-    resolution: "Hybrid profile deployed.",
-    updatedAt: "2026-06-06T11:40:00.000Z",
-    closedAt: "2026-06-06T11:40:00.000Z",
-    notes: [],
-    asset: FALLBACK_ASSETS.find((asset) => asset.id === 13),
-  },
-];
+export const unavailableFindings = [];
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -162,17 +49,9 @@ function humanizeToken(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function fallbackAssetFor(finding) {
+function embeddedAssetFor(finding) {
   const explicit = finding.asset && isPlainObject(finding.asset) ? finding.asset : null;
-  const rawAssetId = finding.assetId ?? finding.asset_id ?? finding.assetID ?? explicit?.id ?? explicit?.assetId;
-  const rawAssetName = finding.assetName ?? finding.asset_name ?? finding.hostname ?? finding.host ?? explicit?.hostname ?? explicit?.name;
-  const byId = rawAssetId !== undefined && rawAssetId !== null
-    ? FALLBACK_ASSETS.find((asset) => String(asset.id) === String(rawAssetId))
-    : null;
-  const byName = rawAssetName
-    ? FALLBACK_ASSETS.find((asset) => asset.hostname === String(rawAssetName))
-    : null;
-  return explicit ?? byId ?? byName ?? null;
+  return explicit;
 }
 
 function getArrayPayload(payload) {
@@ -233,8 +112,8 @@ async function fetchJson(fetcher, path, options = {}) {
   return response.json();
 }
 
-function fallbackFindings() {
-  return clone(findingFallbackFindings);
+function unavailableFindingList() {
+  return clone(unavailableFindings);
 }
 
 function normalizeNotes(value) {
@@ -245,7 +124,7 @@ function normalizeNotes(value) {
 }
 
 export function normalizeFinding(finding, index = 0) {
-  const asset = fallbackAssetFor(finding) ?? {};
+  const asset = embeddedAssetFor(finding) ?? {};
   const assetId = finding.assetId ?? finding.asset_id ?? finding.assetID ?? asset.id ?? finding.host ?? finding.hostname ?? "";
   const assetName = finding.assetName ?? finding.asset_name ?? finding.assetHostname ?? finding.asset_hostname
     ?? finding.hostname ?? finding.host ?? asset.hostname ?? asset.name ?? String(assetId || "");
@@ -348,7 +227,7 @@ export async function loadFindings(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackFindings();
+    return unavailableFindingList();
   }
 
   try {
@@ -358,7 +237,7 @@ export async function loadFindings(options = {}) {
     });
     return getArrayPayload(payload).map((finding, index) => normalizeFinding(finding, index));
   } catch {
-    return fallbackFindings();
+    return unavailableFindingList();
   }
 }
 
@@ -367,7 +246,7 @@ export async function getFinding(id, options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackFindings().find((finding) => finding.id === String(id)) ?? null;
+    return unavailableFindingList().find((finding) => finding.id === String(id)) ?? null;
   }
 
   try {
@@ -377,7 +256,7 @@ export async function getFinding(id, options = {}) {
     });
     return normalizeFinding(getFindingPayload(payload));
   } catch {
-    return fallbackFindings().find((finding) => finding.id === String(id)) ?? null;
+    return unavailableFindingList().find((finding) => finding.id === String(id)) ?? null;
   }
 }
 
@@ -387,7 +266,7 @@ export async function updateFinding(id, updates, options = {}) {
   const method = options.method ?? "PATCH";
 
   if (typeof fetcher !== "function") {
-    return normalizeFinding({ ...updates, id, updatedAt: new Date().toISOString() });
+    throw new Error("Findings API is unavailable");
   }
 
   const requestOptions = {
@@ -424,11 +303,7 @@ export async function appendFindingNote(id, note, options = {}) {
   };
 
   if (typeof fetcher !== "function") {
-    return normalizeFinding({
-      id,
-      notes: [{ text: body.note, author: body.author ?? "local", createdAt: new Date().toISOString() }],
-      updatedAt: new Date().toISOString(),
-    });
+    throw new Error("Findings API is unavailable");
   }
 
   const payload = await fetchJson(fetcher, `${FINDINGS_ENDPOINT}/${encodeURIComponent(id)}/notes`, {
@@ -449,7 +324,7 @@ export async function loadRemediationSummary(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return deriveRemediationSummary(fallbackFindings());
+    return deriveRemediationSummary(unavailableFindingList());
   }
 
   try {
@@ -459,18 +334,18 @@ export async function loadRemediationSummary(options = {}) {
     });
     return normalizeRemediationSummary(payload);
   } catch {
-    return deriveRemediationSummary(fallbackFindings());
+    return deriveRemediationSummary(unavailableFindingList());
   }
 }
 
 export default {
   appendFindingNote,
   deriveRemediationSummary,
-  findingFallbackFindings,
   getFinding,
   loadFindings,
   loadRemediationSummary,
   normalizeFinding,
   normalizeRemediationSummary,
   updateFinding,
+  unavailableFindings,
 };

@@ -3,9 +3,8 @@ import { once } from "node:events";
 import net from "node:net";
 import { test } from "node:test";
 
-import { ASSETS } from "../src/mockData.js";
 import { createApiServer } from "./app.js";
-import { createProbeJob, getProbeJob, listProbeJobs, portsFromListenerOutput, resetProbeJobs } from "./probeEngine.js";
+import { createProbeJob, listProbeJobs, portsFromListenerOutput, resetProbeJobs } from "./probeEngine.js";
 
 const listen = async () => {
   const server = createApiServer();
@@ -46,34 +45,11 @@ const unusedLocalPort = async () => {
   return port;
 };
 
-test("creates, lists, and gets completed simulated probe jobs for seed assets", async () => {
+test("rejects simulated probe jobs", async () => {
   resetProbeJobs();
 
-  const job = await createProbeJob({ assetId: 1 });
-
-  assert.equal(job.id, "probe-1");
-  assert.equal(job.status, "completed");
-  assert.equal(job.mode, "simulate");
-  assert.equal(job.target.assetId, 1);
-  assert.equal(job.target.hostname, "api-gateway-prod-01");
-  assert.equal(job.result.protocol.name, "TLS 1.3");
-  assert.equal(job.result.certificate.algorithm, "RSA-2048");
-  assert.equal(job.result.classification.label, "SHOR-CRITICAL");
-  assert.equal(job.result.classification.priority, "CRITICAL");
-  assert.equal(job.error, null);
-  assert.match(job.createdAt, /^\d{4}-\d{2}-\d{2}T/);
-
-  assert.deepEqual(listProbeJobs(), [job]);
-  assert.deepEqual(getProbeJob(job.id), job);
-});
-
-test("rejects simulated probes for unknown seed assets", async () => {
-  resetProbeJobs();
-
-  await assert.rejects(
-    () => createProbeJob({ assetId: ASSETS.length + 100 }),
-    /Asset not found/,
-  );
+  await assert.rejects(() => createProbeJob({ mode: "simulate", assetId: 1 }), /mode must be tls, discovery, or device/);
+  await assert.rejects(() => createProbeJob({ assetId: 1 }), /mode must be tls, discovery, or device/);
   assert.deepEqual(listProbeJobs(), []);
 });
 
@@ -151,20 +127,21 @@ test("network discovery probes multiple authorized ports with bounded concurrenc
 
 test("serves probe collection, detail, and creation routes", async () => {
   resetProbeJobs();
+  const reachable = await listenTcp();
   const api = await listen();
 
   try {
     const createdResponse = await fetch(`${api.baseUrl}/api/probes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ assetId: 13 }),
+      body: JSON.stringify({ mode: "discovery", hosts: ["127.0.0.1"], port: reachable.port, timeoutMs: 100 }),
     });
     const created = await createdResponse.json();
 
     assert.equal(createdResponse.status, 201);
     assert.equal(created.data.id, "probe-1");
-    assert.equal(created.data.target.hostname, "api-gw-pqc-pilot");
-    assert.equal(created.data.result.classification.label, "HYBRID");
+    assert.equal(created.data.target.hosts[0], "127.0.0.1");
+    assert.equal(created.data.result.summary.completedCount, 1);
 
     const listResponse = await fetch(`${api.baseUrl}/api/probes`);
     const list = await listResponse.json();
@@ -186,6 +163,7 @@ test("serves probe collection, detail, and creation routes", async () => {
     assert.deepEqual(missing, { error: "Probe not found" });
   } finally {
     await api.close();
+    await reachable.close();
   }
 });
 
@@ -212,7 +190,7 @@ test("returns bad request responses for invalid probe payloads", async () => {
     const invalidProbe = await invalidProbeResponse.json();
 
     assert.equal(invalidProbeResponse.status, 400);
-    assert.deepEqual(invalidProbe, { error: "assetId is required for simulated probes" });
+    assert.deepEqual(invalidProbe, { error: "mode must be tls, discovery, or device" });
   } finally {
     await api.close();
   }

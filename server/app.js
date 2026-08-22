@@ -1,6 +1,5 @@
 import http from "node:http";
 
-import { ALGO_DIST, ALERTS, ASSETS, COMPLIANCE, TREND_DATA } from "../src/mockData.js";
 import { createProbeJob, getProbeJob, listProbeJobs } from "./probeEngine.js";
 import {
   createMonitorScheduler,
@@ -61,7 +60,7 @@ function findingToAlert(finding) {
 }
 
 async function activeAlerts(datastore) {
-  if (!datastore) return ALERTS;
+  if (!datastore) return [];
   const findings = await datastore.listFindings();
   return findings
     .filter((finding) => !TERMINAL_FINDING_STATUSES.has(String(finding.status ?? "").toLowerCase()))
@@ -72,10 +71,10 @@ async function activeAlerts(datastore) {
 }
 
 export function deriveSummary({
-  assets = ASSETS,
-  alerts = ALERTS,
-  compliance = COMPLIANCE,
-  trends = TREND_DATA,
+  assets = [],
+  alerts = [],
+  compliance = [],
+  trends = [],
 } = {}) {
   const latest = trends.at(-1) ?? { risk: 0, safe: 0 };
   const first = trends[0] ?? { risk: 0, safe: 0 };
@@ -144,7 +143,7 @@ function toCbomEntry(asset) {
   };
 }
 
-export function buildCbom(assets = ASSETS) {
+export function buildCbom(assets = []) {
   const data = assets.map(toCbomEntry);
   const migrationTargets = {};
 
@@ -293,7 +292,7 @@ function readJsonBody(request) {
 
 function handleEvents(request, response) {
   response.writeHead(200, SSE_HEADERS);
-  response.write(`event: summary\ndata: ${JSON.stringify(deriveSummary())}\n\n`);
+  response.write(`event: summary\ndata: ${JSON.stringify(deriveSummary({ assets: [], alerts: [], compliance: [], trends: [] }))}\n\n`);
 
   const interval = setInterval(() => {
     response.write(`event: heartbeat\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
@@ -667,11 +666,11 @@ export async function backfillProbeAssets(datastore) {
 async function analyzeAssetById(datastore, id) {
   const asset = datastore
     ? await datastore.getAsset(id)
-    : ASSETS.find((candidate) => String(candidate.id) === String(id));
+    : null;
 
   if (!asset) return null;
 
-  const history = datastore ? await datastore.listAssetHistory(id) : [{ source: "seed", asset }];
+  const history = datastore ? await datastore.listAssetHistory(id) : [];
   const findings = datastore ? await datastore.listFindings({ assetId: id }) : [];
   const drift = detectAssetDrift(history);
   const analysis = analyzeAsset(asset);
@@ -685,11 +684,11 @@ async function analyzeAssetById(datastore, id) {
 }
 
 async function analyzePortfolioDrift(datastore) {
-  const assets = datastore ? await datastore.listAssets() : ASSETS;
+  const assets = datastore ? await datastore.listAssets() : [];
   const results = [];
 
   for (const asset of assets) {
-    const history = datastore ? await datastore.listAssetHistory(asset.id) : [{ source: "seed", asset }];
+    const history = datastore ? await datastore.listAssetHistory(asset.id) : [];
     const drift = detectAssetDrift(history);
     if (drift.driftDetected) {
       results.push({
@@ -714,8 +713,8 @@ async function analyzePortfolioDrift(datastore) {
 
 async function recomputeRisk(datastore, { assetId = null, persist = true } = {}) {
   const assets = assetId == null
-    ? (datastore ? await datastore.listAssets() : ASSETS)
-    : [datastore ? await datastore.getAsset(assetId) : ASSETS.find((asset) => String(asset.id) === String(assetId))].filter(Boolean);
+    ? (datastore ? await datastore.listAssets() : [])
+    : [datastore ? await datastore.getAsset(assetId) : null].filter(Boolean);
 
   if (assetId != null && assets.length === 0) return null;
 
@@ -1143,32 +1142,32 @@ export function createApiServer({ datastore = null, scheduler = null, schedulerO
           sendJson(response, 200, { data: schedulerRuntime.getStatus() });
           break;
         case "/api/assets":
-          sendCollection(response, datastore ? await datastore.listAssets() : ASSETS);
+          sendCollection(response, datastore ? await datastore.listAssets() : []);
           break;
         case "/api/alerts":
           sendCollection(response, await activeAlerts(datastore));
           break;
         case "/api/compliance":
-          sendCollection(response, datastore ? [] : COMPLIANCE);
+          sendCollection(response, []);
           break;
         case "/api/trends":
-          sendCollection(response, datastore ? [] : TREND_DATA);
+          sendCollection(response, []);
           break;
         case "/api/algorithms":
-          sendCollection(response, datastore ? [] : ALGO_DIST);
+          sendCollection(response, []);
           break;
         case "/api/summary":
           sendJson(response, 200, {
             data: deriveSummary({
-              assets: datastore ? await datastore.listAssets() : ASSETS,
+              assets: datastore ? await datastore.listAssets() : [],
               alerts: await activeAlerts(datastore),
-              compliance: datastore ? [] : COMPLIANCE,
-              trends: datastore ? [] : TREND_DATA,
+              compliance: [],
+              trends: [],
             }),
           });
           break;
         case "/api/cbom":
-          sendJson(response, 200, buildCbom(datastore ? await datastore.listAssets() : ASSETS));
+          sendJson(response, 200, buildCbom(datastore ? await datastore.listAssets() : []));
           break;
         case "/api/drift":
           sendJson(response, 200, { data: await analyzePortfolioDrift(datastore) });

@@ -5,131 +5,17 @@ const MONITOR_RUNS_ENDPOINT = "/api/monitor-runs";
 const MONITOR_HEALTH_ENDPOINT = "/api/monitor-health";
 const DEFAULT_INTERVAL_SECONDS = 900;
 
-export const monitorFallbackPolicies = [
-  {
-    id: "fallback-discovery-edge",
-    name: "Edge Discovery Sweep",
-    enabled: true,
-    intervalSeconds: 900,
-    nextRunAt: "2026-06-06T16:30:00.000Z",
-    lastRunAt: "2026-06-06T16:00:00.000Z",
-    lastJob: {
-      id: "fallback-discovery-job",
-      name: "Discovery Probe",
-      type: "discovery",
-      target: "api-gateway-prod-01, vpn-concentrator-02",
-      status: "COMPLETED",
-      progress: 100,
-      createdAt: "2026-06-06T16:00:00.000Z",
-      updatedAt: "2026-06-06T16:00:08.000Z",
-      completedAt: "2026-06-06T16:00:08.000Z",
-      findingsCount: 2,
-      riskScore: 48,
-      error: "",
-      request: {
-        mode: "discovery",
-        hosts: ["api-gateway-prod-01", "vpn-concentrator-02"],
-        timeoutMs: 2500,
-      },
-      result: {
-        summary: "2 hosts observed",
-      },
-    },
-    probeRequest: {
-      mode: "discovery",
-      hosts: ["api-gateway-prod-01", "vpn-concentrator-02"],
-      timeoutMs: 2500,
-    },
-  },
-  {
-    id: "fallback-discovery-pki",
-    name: "PKI Trust Chain Watch",
-    enabled: false,
-    intervalSeconds: 3600,
-    nextRunAt: null,
-    lastRunAt: "2026-06-06T14:45:00.000Z",
-    lastJob: {
-      id: "fallback-pki-job",
-      name: "Discovery Probe",
-      type: "discovery",
-      target: "ca-root-internal, code-signing-01",
-      status: "COMPLETED",
-      progress: 100,
-      createdAt: "2026-06-06T14:45:00.000Z",
-      updatedAt: "2026-06-06T14:45:05.000Z",
-      completedAt: "2026-06-06T14:45:05.000Z",
-      findingsCount: 1,
-      riskScore: 64,
-      error: "",
-      request: {
-        mode: "discovery",
-        hosts: ["ca-root-internal", "code-signing-01"],
-        timeoutMs: 3000,
-      },
-      result: {
-        summary: "PKI endpoints reachable",
-      },
-    },
-    probeRequest: {
-      mode: "discovery",
-      hosts: ["ca-root-internal", "code-signing-01"],
-      timeoutMs: 3000,
-    },
-  },
-];
+export const unavailableMonitorPolicies = [];
 
-export const monitorFallbackRuns = [
-  {
-    id: "fallback-run-edge-latest",
-    policyId: "fallback-discovery-edge",
-    policyName: "Edge Discovery Sweep",
-    status: "RUNNING",
-    trigger: "SCHEDULE",
-    startedAt: "2026-06-06T16:20:00.000Z",
-    completedAt: null,
-    jobId: "fallback-discovery-job",
-    error: "",
-    summary: "Discovery sweep in progress",
-    observationsCount: 7,
-    findingsCount: 2,
-  },
-  {
-    id: "fallback-run-edge-previous",
-    policyId: "fallback-discovery-edge",
-    policyName: "Edge Discovery Sweep",
-    status: "COMPLETED",
-    trigger: "SCHEDULE",
-    startedAt: "2026-06-06T16:00:00.000Z",
-    completedAt: "2026-06-06T16:00:08.000Z",
-    jobId: "fallback-discovery-job",
-    error: "",
-    summary: "2 hosts observed",
-    observationsCount: 2,
-    findingsCount: 2,
-  },
-  {
-    id: "fallback-run-pki-failed",
-    policyId: "fallback-discovery-pki",
-    policyName: "PKI Trust Chain Watch",
-    status: "FAILED",
-    trigger: "MANUAL",
-    startedAt: "2026-06-06T14:45:00.000Z",
-    completedAt: "2026-06-06T14:45:05.000Z",
-    jobId: "fallback-pki-job",
-    error: "Certificate chain drift detected",
-    summary: "PKI endpoints reachable",
-    observationsCount: 2,
-    findingsCount: 1,
-  },
-];
+export const unavailableMonitorRuns = [];
 
-export const monitorFallbackHealth = {
-  totalPolicies: 2,
-  enabledPolicies: 1,
-  duePolicies: 1,
-  runningRuns: 1,
-  failedRecentRuns: 1,
-  lastRunAt: "2026-06-06T16:20:00.000Z",
+export const unavailableMonitorHealth = {
+  totalPolicies: 0,
+  enabledPolicies: 0,
+  duePolicies: 0,
+  runningRuns: 0,
+  failedRecentRuns: 0,
+  lastRunAt: null,
 };
 
 function clone(value) {
@@ -223,16 +109,16 @@ async function fetchJson(fetcher, path, options = {}) {
   return response.json();
 }
 
-function fallbackPolicies() {
-  return clone(monitorFallbackPolicies);
+function unavailablePolicies() {
+  return clone(unavailableMonitorPolicies);
 }
 
-function fallbackRuns() {
-  return clone(monitorFallbackRuns);
+function unavailableRuns() {
+  return clone(unavailableMonitorRuns);
 }
 
-function fallbackHealth() {
-  return clone(monitorFallbackHealth);
+function unavailableHealth() {
+  return clone(unavailableMonitorHealth);
 }
 
 function cleanProbeJob(job) {
@@ -346,7 +232,7 @@ export async function loadMonitorPolicies(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackPolicies();
+    return unavailablePolicies();
   }
 
   try {
@@ -356,7 +242,7 @@ export async function loadMonitorPolicies(options = {}) {
     });
     return getArrayPayload(payload).map((policy, index) => normalizeMonitorPolicy(policy, index));
   } catch {
-    return fallbackPolicies();
+    return unavailablePolicies();
   }
 }
 
@@ -365,7 +251,7 @@ export async function loadMonitorRuns(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackRuns();
+    return unavailableRuns();
   }
 
   try {
@@ -375,7 +261,7 @@ export async function loadMonitorRuns(options = {}) {
     });
     return getArrayPayload(payload).map((run, index) => normalizeMonitorRun(run, index));
   } catch {
-    return fallbackRuns();
+    return unavailableRuns();
   }
 }
 
@@ -384,7 +270,7 @@ export async function loadMonitorPolicyRuns(id, options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackRuns().filter((run) => run.policyId === String(id));
+    return unavailableRuns().filter((run) => run.policyId === String(id));
   }
 
   try {
@@ -394,7 +280,7 @@ export async function loadMonitorPolicyRuns(id, options = {}) {
     });
     return getArrayPayload(payload).map((run, index) => normalizeMonitorRun(run, index));
   } catch {
-    return fallbackRuns().filter((run) => run.policyId === String(id));
+    return unavailableRuns().filter((run) => run.policyId === String(id));
   }
 }
 
@@ -403,7 +289,7 @@ export async function loadMonitorHealth(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackHealth();
+    return unavailableHealth();
   }
 
   try {
@@ -413,7 +299,7 @@ export async function loadMonitorHealth(options = {}) {
     });
     return normalizeMonitorHealth(payload);
   } catch {
-    return fallbackHealth();
+    return unavailableHealth();
   }
 }
 
@@ -422,10 +308,7 @@ export async function createMonitorPolicy(request, options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return normalizeMonitorPolicy({
-      ...request,
-      id: "local-monitor-policy",
-    });
+    throw new Error("Monitor API is unavailable");
   }
 
   try {
@@ -440,11 +323,8 @@ export async function createMonitorPolicy(request, options = {}) {
     });
 
     return normalizeMonitorPolicy(getPolicyPayload(payload));
-  } catch {
-    return normalizeMonitorPolicy({
-      ...request,
-      id: "local-monitor-policy",
-    });
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -453,7 +333,7 @@ export async function getMonitorPolicy(id, options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackPolicies().find((policy) => policy.id === String(id)) ?? null;
+    return unavailablePolicies().find((policy) => policy.id === String(id)) ?? null;
   }
 
   const payload = await fetchJson(fetcher, `${MONITORS_ENDPOINT}/${encodeURIComponent(id)}`, {
@@ -486,38 +366,12 @@ function normalizeRunPayload(payload) {
   };
 }
 
-function localRunResult(id) {
-  const policy = fallbackPolicies().find((item) => item.id === String(id)) ?? null;
-  const probeRequest = policy?.probeRequest ?? { mode: "discovery", hosts: [], timeoutMs: 2500 };
-
-  return {
-    policy,
-    job: cleanProbeJob({
-      id: "local-monitor-run",
-      status: "queued",
-      progress: 0,
-      request: probeRequest,
-      type: probeRequest.mode ?? probeRequest.type ?? "probe",
-    }),
-    run: normalizeMonitorRun({
-      id: "local-monitor-run",
-      policyId: String(id),
-      policyName: policy?.name ?? "Monitor Policy",
-      status: "queued",
-      trigger: "manual",
-      startedAt: new Date().toISOString(),
-      jobId: "local-monitor-run",
-      summary: "Local monitor run queued",
-    }),
-  };
-}
-
 export async function runMonitorPolicyNow(id, options = {}) {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return localRunResult(id);
+    return { policy: null, job: null, run: null };
   }
 
   try {
@@ -529,7 +383,7 @@ export async function runMonitorPolicyNow(id, options = {}) {
 
     return normalizeRunPayload(payload);
   } catch {
-    return localRunResult(id);
+    return { policy: null, job: null, run: null };
   }
 }
 
@@ -540,11 +394,11 @@ export default {
   loadMonitorPolicies,
   loadMonitorPolicyRuns,
   loadMonitorRuns,
-  monitorFallbackHealth,
-  monitorFallbackPolicies,
-  monitorFallbackRuns,
   normalizeMonitorHealth,
   normalizeMonitorPolicy,
   normalizeMonitorRun,
   runMonitorPolicyNow,
+  unavailableMonitorHealth,
+  unavailableMonitorPolicies,
+  unavailableMonitorRuns,
 };

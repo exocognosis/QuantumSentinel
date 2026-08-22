@@ -245,7 +245,7 @@ function Brand() {
   );
 }
 
-function Header({ active, setActive, theme, toggleTheme, profileComplete, onboardingVisible }) {
+function Header({ active, setActive, theme, toggleTheme, profileComplete, onboardingVisible, apiLive, openOnboarding }) {
   const visibleNav = NAV.filter((item) => item.id !== ROUTES.onboarding || !profileComplete || onboardingVisible || active === ROUTES.onboarding);
   return (
     <header className="app-header">
@@ -255,7 +255,7 @@ function Header({ active, setActive, theme, toggleTheme, profileComplete, onboar
           <button
             key={id}
             className={active === id ? "active" : ""}
-            onClick={() => setActive(id)}
+            onClick={() => id === ROUTES.onboarding ? openOnboarding() : setActive(id)}
           >
             <Icon />
             {label}
@@ -263,9 +263,9 @@ function Header({ active, setActive, theme, toggleTheme, profileComplete, onboar
         ))}
       </nav>
       <div className="header-tools">
-        <span className="live">
+        <span className={`live ${apiLive ? "" : "unavailable"}`}>
           <i />
-          System live
+          {apiLive ? "System live" : "API unavailable"}
         </span>
         <button
           className="theme-toggle"
@@ -576,8 +576,12 @@ function Onboarding({ profile, onSave, setActive, qdayScenario, scans }) {
     <>
       <PageTitle
         title="Onboarding"
-        subtitle="Enter organization context before collecting evidence. After setup is complete, this tab hides. Select Onboarding on the Overview page to show it again."
+        subtitle="Complete setup in order: organization profile, Q-Day horizon, then scan selection. After setup is complete, this tab hides. Select Onboarding on Overview or Settings to show it again."
       >
+        <button className="primary" onClick={() => setActive(ROUTES.collect)} disabled={!profileReady}>
+          <Target />
+          Continue to scan
+        </button>
         <button className="secondary" onClick={() => setActive(ROUTES.overview)}>
           <ChevronRight />
           Return to overview
@@ -600,7 +604,7 @@ function Onboarding({ profile, onSave, setActive, qdayScenario, scans }) {
         initialProfile={profile}
         onSave={(next) => {
           onSave(next);
-          setActive(ROUTES.overview);
+          setActive(ROUTES.collect);
         }}
         onClose={() => setActive(ROUTES.overview)}
         variant="page"
@@ -814,7 +818,6 @@ function scopedPlanContext(data = {}, scans = [], scores, selectedScope = "organ
     alerts: scopedAlerts,
     compliance,
     summary: deriveSummary(scopedAssets, scopedAlerts, compliance),
-    isFallback: data?.isFallback,
   };
   return {
     scopeLabel: selectedScopeLabel || `${scanTypeLabel(selectedScan)} · ${selectedScan.targetLabel || selectedScan.target?.host || selectedScan.id}`,
@@ -1104,7 +1107,7 @@ function CryptoInventory({ data, setActive, embedded = false }) {
   );
 }
 
-function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQdayScenario, openResultsForScope, openPlanForScope }) {
+function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQdayScenario, openResultsForScope, openPlanForScope, openOnboarding }) {
   const [scoreScope, setScoreScope] = useState("organization");
   const assets = data?.assets || [];
   const completedScans = scans.filter(scan => scan.status === "COMPLETED" && scan.result);
@@ -1136,13 +1139,18 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
   const assessed = readiness.assessed;
   const horizon = QDAY_SCENARIOS[qdayScenario];
   const horizonDisplay = formatHorizon(daysUntil(horizon.date));
+  const overviewSubtitle = profileComplete
+    ? `${profile.name} readiness posture and next action.`
+    : assets.length
+      ? "Evidence exists. Complete organization setup to add business context before relying on the score."
+      : "Complete organization setup, then collect the first evidence baseline.";
   return (
     <>
       <PageTitle
         title="Overview"
-        subtitle={profileComplete ? `${profile.name} readiness posture and next action.` : "Set up the organization profile before collecting evidence."}
+        subtitle={overviewSubtitle}
       >
-        <button className="secondary" onClick={() => setActive(ROUTES.onboarding)}>
+        <button className="secondary" onClick={openOnboarding}>
           <Building2 />
           Onboarding
         </button>
@@ -1155,6 +1163,22 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
           View plan
         </button>
       </PageTitle>
+      {!profileComplete && (
+        <article className="card setup-warning">
+          <Building2 />
+          <div>
+            <b>Organization setup is not complete.</b>
+            <p>
+              Current scores use technical scan evidence only. Add organization name,
+              industry, geography, and data context before using the score as a
+              planning baseline.
+            </p>
+          </div>
+          <button className="primary" onClick={openOnboarding}>
+            Complete setup
+          </button>
+        </article>
+      )}
       <section className="overview-grid">
         <article className="card readiness-summary">
           <div className="card-heading">
@@ -1992,13 +2016,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
             {completed && lastResult && (
               <button
                 className="primary"
-                onClick={() =>
-                  document
-                    .getElementById("scan-analysis")
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                }
+                onClick={() => openResultsForScope(lastScanId || "organization")}
               >
-                View scan analysis <ChevronRight />
+                Review results <ChevronRight />
               </button>
             )}
           </div>
@@ -2051,7 +2071,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                 <p>No additional cryptographic findings were returned.</p>
               )}
               <div className="analysis-actions">
-                <button className="secondary" onClick={() => openResultsForScope(lastScanId || "organization")}>Open results <ChevronRight /></button>
+                <button className="primary" onClick={() => openResultsForScope(lastScanId || "organization")}>Review results <ChevronRight /></button>
                 <button
                   className="secondary"
                   onClick={() => {
@@ -2717,6 +2737,7 @@ function Remediation({ data, scans = [], scores, profile, qdayScenario }) {
         owner: "Unassigned",
         due: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
         status: "Planned",
+        sourceKind: "Generated recommendation",
         urgency: Number(asset.risk) || 50,
         target: asset.migration || "Define a hybrid or post-quantum target state",
         evidenceNeeded: "Owner approval, implementation record, updated CBOM, and post-change scan evidence.",
@@ -3484,14 +3505,32 @@ function ResultsWorkspace({ data, scores, scans = [], setActive, selectedScope =
           </div>
         </article>
 
-        <article className="card results-meaning">
-          <div className="card-heading">
-            <span><CircleHelp />What this means</span>
-            <small>{resultsContext.selectedScan ? "Scan-specific" : "Organization-wide"}</small>
+        <article className="card results-decision">
+          <div>
+            <span className="eyebrow">What did we find?</span>
+            <h3>{criticalAssets.length ? `${criticalAssets.length} priority finding${criticalAssets.length === 1 ? "" : "s"}` : "No priority finding in scope"}</h3>
+            <p>{assets.length} observed asset{assets.length === 1 ? "" : "s"} and {components.length} CBOM component{components.length === 1 ? "" : "s"} are in this view.</p>
           </div>
-          <h3>{interpretation.title}</h3>
-          <p>{interpretation.body}</p>
-          <b>{interpretation.next}</b>
+          <div>
+            <span className="eyebrow">What does it mean?</span>
+            <h3>{interpretation.title}</h3>
+            <p>{interpretation.body}</p>
+          </div>
+          <div>
+            <span className="eyebrow">What should we do next?</span>
+            <h3>{criticalAssets.length ? "Assign migration owners" : "Improve evidence confidence"}</h3>
+            <p>{interpretation.next}</p>
+            <div className="results-decision-actions">
+              <button className="primary" onClick={() => openScopedPlan(resultsScope)}>
+                <Wrench />
+                Open plan
+              </button>
+              <button className="secondary" onClick={() => setActive(ROUTES.learn)}>
+                <CircleHelp />
+                Learn terms
+              </button>
+            </div>
+          </div>
         </article>
 
         <article className="card results-cbom">
@@ -3534,6 +3573,9 @@ function ResultsWorkspace({ data, scores, scans = [], setActive, selectedScope =
                 <b>{asset.hostname || asset.name || asset.id}</b>
                 <span>{assetExposureReason(asset)}</span>
                 <small>{targetState(asset)}</small>
+                <button className="text-link" onClick={() => openScopedPlan(resultsScope)}>
+                  Plan finding <ChevronRight />
+                </button>
               </div>
             ))}
             {!criticalAssets.length && <p className="empty-scans">No priority findings yet. Run an authorized scan to collect evidence.</p>}
@@ -3631,6 +3673,9 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
   const [planName, setPlanName] = useState("Critical systems migration");
   const [planOwner, setPlanOwner] = useState("");
   const [planDeadline, setPlanDeadline] = useState("2026-12-31");
+  const [planTargetState, setPlanTargetState] = useState("Inventory, pilot, and migrate priority cryptography");
+  const [planEvidenceRequired, setPlanEvidenceRequired] = useState("Approved scope, pilot result, updated CBOM, and validation scan.");
+  const [planStatus, setPlanStatus] = useState("Planned");
   const [planOwnerError, setPlanOwnerError] = useState("");
   const statusOrder = { Blocked: 0, "In progress": 1, Planned: 2, Completed: 3 };
   const persistedActions = actions.filter((action) => {
@@ -3647,9 +3692,20 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
   const openCount = allActions.filter(action => action.status !== "Completed").length;
   const progressCount = allActions.filter(action => action.status === "In progress").length;
   const completedCount = allActions.filter(action => action.status === "Completed").length;
+  const ownedActionCount = persistedActions.length;
+  const generatedActionCount = allActions.filter(action => action.sourceKind === "Generated recommendation").length;
   const brief = deriveMigrationBrief(planContext.scores, planContext.data, profile, qdayScenario, planContext.scans);
   const primaryReport = buildReportRecord(REPORT_TYPES[3], planContext.scores, planContext.data, profile, qdayScenario, planContext.scans);
   const openReport = type => setSelectedReport(buildReportRecord(type, planContext.scores, planContext.data, profile, qdayScenario, planContext.scans));
+  const planSeed = useMemo(() => evidenceActions[0] || {
+    title: `${planContext.scopeLabel} migration action`,
+    owner: "Unassigned",
+    due: dueDate(90),
+    status: "Planned",
+    urgency: 75,
+    target: "Inventory, pilot, and migrate priority cryptography",
+    evidenceNeeded: "Approved scope, pilot result, updated CBOM, and validation scan.",
+  }, [evidenceActions, planContext.scopeLabel]);
 
   useEffect(() => {
     localStorage.setItem("quantumsentinel-remediation-actions", JSON.stringify(actions));
@@ -3669,6 +3725,17 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
     setPlanOwnerError("");
   };
 
+  const openPlanBuilder = () => {
+    setPlanName(planSeed.title || `${planContext.scopeLabel} migration action`);
+    setPlanOwner(planSeed.owner && planSeed.owner !== "Unassigned" ? planSeed.owner : "");
+    setPlanDeadline(planSeed.due || dueDate(90));
+    setPlanTargetState(planSeed.target || "Inventory, pilot, and migrate priority cryptography");
+    setPlanEvidenceRequired(planSeed.evidenceNeeded || evidenceNeededForAction(planSeed));
+    setPlanStatus(planSeed.status || "Planned");
+    setPlanOwnerError("");
+    setPlanOpen(true);
+  };
+
   const createPlan = (event) => {
     event.preventDefault();
     const owner = planOwner.trim();
@@ -3683,11 +3750,12 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
       scopeId: planScope,
       owner,
       due: planDeadline,
-      status: "Planned",
+      status: planStatus,
+      sourceKind: "Owned action",
       scanType: planContext.selectedScan ? scanTypeLabel(planContext.selectedScan) : "Manual plan",
-      urgency: 75,
-      target: "Inventory, pilot, and migrate priority cryptography",
-      evidenceNeeded: "Approved scope, pilot result, updated CBOM, and validation scan.",
+      urgency: planSeed.urgency || 75,
+      target: planTargetState.trim(),
+      evidenceNeeded: planEvidenceRequired.trim(),
     };
     setActions(current => [newAction, ...current]);
     closePlanBuilder();
@@ -3708,7 +3776,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
           onChange={changePlanScope}
           className="plan-scope-picker"
         />
-        <button className="primary" onClick={() => setPlanOpen(true)}>
+        <button className="primary" onClick={openPlanBuilder}>
           <Wrench />
           Create action
         </button>
@@ -3785,7 +3853,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
 
         <article className="card plan-queue">
           <div className="card-heading">
-            <span><Wrench />Migration queue</span>
+            <span><Wrench />Migration queue <small>{generatedActionCount} generated · {ownedActionCount} owned</small></span>
             <label className="queue-sort">Sort by
               <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort migration queue">
                 <option value="urgency">Urgency</option>
@@ -3801,7 +3869,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
                 <span className="step-number">{index + 1}</span>
                 <span>
                   <b>{action.title}</b>
-                  <small>{action.asset} · {action.scanType || "Manual plan"}</small>
+                  <small>{action.asset} · {action.sourceKind || "Owned action"} · {action.scanType || "Manual plan"} · {action.target}</small>
                 </span>
                 <span>{action.owner}</span>
                 <span>{new Date(`${action.due}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
@@ -3811,14 +3879,14 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
           </div>
         </article>
       </section>
-      {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New action</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, and readiness deadline.</p></div><button type="button" className="icon-button" onClick={closePlanBuilder} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input required value={planOwner} onChange={event => { setPlanOwner(event.target.value); if (planOwnerError) setPlanOwnerError(""); }} placeholder="Name or team" aria-invalid={planOwnerError ? "true" : "false"} />{planOwnerError && <small className="field-error">{planOwnerError}</small>}</label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={closePlanBuilder}>Cancel</button><button type="submit" className="primary" disabled={!planName.trim() || !planOwner.trim() || !planDeadline}><Check />Add to queue</button></div></form></div>}
-      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Migration action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close migration action details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download action PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div><div><dt>Evidence needed</dt><dd>{selectedAction.evidenceNeeded || evidenceNeededForAction(selectedAction)}</dd></div></dl><p><b>Planning boundary:</b> Completion requires implementation evidence, validation evidence, updated CBOM evidence, and a rescan.</p></aside>}
+      {planOpen && <div className="plan-backdrop" role="presentation"><form className="card plan-dialog" role="dialog" aria-modal="true" aria-label="Create migration plan" onSubmit={createPlan}><div className="plan-dialog-heading"><div><span className="eyebrow">New action</span><h2>Create an owned migration action</h2><p>Start with a named outcome, accountable owner, target state, and evidence requirement.</p></div><button type="button" className="icon-button" onClick={closePlanBuilder} aria-label="Close plan builder">×</button></div><label>Plan name<input required value={planName} onChange={event => setPlanName(event.target.value)} /></label><label>Owner<input required value={planOwner} onChange={event => { setPlanOwner(event.target.value); if (planOwnerError) setPlanOwnerError(""); }} placeholder="Name or team" aria-invalid={planOwnerError ? "true" : "false"} />{planOwnerError && <small className="field-error">{planOwnerError}</small>}</label><label>Target completion date<input required type="date" value={planDeadline} onChange={event => setPlanDeadline(event.target.value)} /></label><label>Status<select value={planStatus} onChange={event => setPlanStatus(event.target.value)}><option value="Planned">Planned</option><option value="In progress">In progress</option><option value="Blocked">Blocked</option><option value="Completed">Completed</option></select></label><label>Target state<textarea required rows="3" value={planTargetState} onChange={event => setPlanTargetState(event.target.value)} /></label><label>Evidence required<textarea required rows="3" value={planEvidenceRequired} onChange={event => setPlanEvidenceRequired(event.target.value)} /></label><div className="plan-actions"><button type="button" className="secondary" onClick={closePlanBuilder}>Cancel</button><button type="submit" className="primary" disabled={!planName.trim() || !planOwner.trim() || !planDeadline || !planTargetState.trim() || !planEvidenceRequired.trim()}><Check />Add to queue</button></div></form></div>}
+      {selectedAction && <aside className="asset-drawer remediation-drawer" role="dialog" aria-modal="true" aria-label="Migration action details"><div className="asset-drawer-heading"><span className="metric-icon blue"><Wrench /></span><div><span className="eyebrow">Migration action</span><h2>{selectedAction.title}</h2></div><button className="icon-button" onClick={() => setSelectedAction(null)} aria-label="Close migration action details">×</button></div><div className="drawer-actions"><button className="primary" onClick={() => downloadMigrationPlan(selectedAction)}><FileDown />Download action PDF</button></div><dl><div><dt>Asset or scope</dt><dd>{selectedAction.asset}</dd></div><div><dt>Action source</dt><dd>{selectedAction.sourceKind || "Owned action"}</dd></div><div><dt>Owner</dt><dd>{selectedAction.owner}</dd></div><div><dt>Status</dt><dd>{selectedAction.status}</dd></div><div><dt>Urgency</dt><dd>{selectedAction.urgency}/100</dd></div><div><dt>Due date</dt><dd>{new Date(`${selectedAction.due}T00:00:00`).toLocaleDateString()}</dd></div><div><dt>Target state</dt><dd>{selectedAction.target}</dd></div><div><dt>Evidence needed</dt><dd>{selectedAction.evidenceNeeded || evidenceNeededForAction(selectedAction)}</dd></div></dl><p><b>Planning boundary:</b> Completion requires implementation evidence, validation evidence, updated CBOM evidence, and a rescan.</p></aside>}
       {selectedReport && <aside className="asset-drawer report-drawer" role="dialog" aria-modal="true" aria-label="Report details"><div className="asset-drawer-heading"><span className="report-icon"><FileText /></span><div><span className="eyebrow">Export package</span><h2>{selectedReport.title}</h2></div><button className="icon-button" onClick={() => setSelectedReport(null)} aria-label="Close report details">×</button></div><p className="report-description">{selectedReport.description}</p><div className="report-context-note drawer-note"><b>This export includes</b><span>Organization profile, selected scope, scan evidence, CBOM, readiness score, priority findings, migration path, timeline, owners, decisions, and evidence boundary.</span></div><div className="drawer-actions"><button className="primary" onClick={() => downloadReportPdf(selectedReport)}><FileDown />Download PDF</button><button className="secondary" onClick={() => downloadReportJson(selectedReport)}>Download JSON</button></div><h3>Decision state</h3><div className="drawer-brief"><b>{selectedReport.brief.briefStatus}</b><p>{selectedReport.brief.nextAction}</p></div><h3>Report sections</h3><div className="report-sections">{selectedReport.sections.map(section => <section key={section.title}><h4>{section.title}</h4><p>{section.body}</p><ul>{section.bullets.map(item => <li key={item}>{item}</li>)}</ul></section>)}</div><p><b>Evidence boundary:</b> {selectedReport.evidenceBoundary}</p></aside>}
     </>
   );
 }
 
-function Settings({ profile, qdayScenario, setQdayScenario, theme, toggleTheme, setActive, onboardingVisible, setOnboardingVisible }) {
+function Settings({ profile, qdayScenario, setQdayScenario, theme, toggleTheme, openOnboarding, onboardingVisible, setOnboardingVisible }) {
   const horizon = QDAY_SCENARIOS[qdayScenario] || QDAY_SCENARIOS.ionq;
   const horizonDisplay = formatHorizon(daysUntil(horizon.date));
   return (
@@ -3845,7 +3913,7 @@ function Settings({ profile, qdayScenario, setQdayScenario, theme, toggleTheme, 
               onChange={(event) => setOnboardingVisible(event.target.checked)}
             />
           </label>
-          <button className="secondary" onClick={() => setActive(ROUTES.onboarding)}>
+          <button className="secondary" onClick={openOnboarding}>
             <Building2 />
             Open onboarding
           </button>
@@ -3931,12 +3999,17 @@ export default function App() {
     refreshEvidence();
   }, [refreshEvidence]);
   const scores = useMemo(() => deriveQuantumScores(data || {}), [data]);
+  const openOnboarding = useCallback(() => {
+    setOnboardingVisible(true);
+    setActive(ROUTES.onboarding);
+  }, []);
   const saveProfile = useCallback((next) => {
     setProfile(next);
     localStorage.setItem(
       "quantumSentinel.organizationProfile",
       JSON.stringify(next),
     );
+    if (isProfileComplete(next)) setOnboardingVisible(false);
   }, []);
   const openResultsForScope = useCallback((scope = "organization") => {
     setSelectedScope(scope || "organization");
@@ -3961,6 +4034,7 @@ export default function App() {
           setQdayScenario={setQdayScenario}
           openResultsForScope={openResultsForScope}
           openPlanForScope={openPlanForScope}
+          openOnboarding={openOnboarding}
         />
       );
     if (active === ROUTES.learn) return <QuantumContext />;
@@ -3972,7 +4046,7 @@ export default function App() {
           setQdayScenario={setQdayScenario}
           theme={theme}
           toggleTheme={() => setTheme(current => current === "light" ? "dark" : "light")}
-          setActive={setActive}
+          openOnboarding={openOnboarding}
           onboardingVisible={onboardingVisible}
           setOnboardingVisible={setOnboardingVisible}
         />
@@ -3985,7 +4059,7 @@ export default function App() {
     if (active === ROUTES.plan || active === ROUTES.exports)
       return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} selectedScope={selectedScope} setSelectedScope={setSelectedScope} />;
     return <PlanWorkspace data={data} scans={scans} scores={scores} profile={profile} qdayScenario={qdayScenario} selectedScope={selectedScope} setSelectedScope={setSelectedScope} />;
-  }, [active, data, profile, qdayScenario, saveProfile, scores, scans, refreshEvidence, theme, onboardingVisible, selectedScope, openResultsForScope, openPlanForScope]);
+  }, [active, data, profile, qdayScenario, saveProfile, scores, scans, refreshEvidence, theme, onboardingVisible, selectedScope, openResultsForScope, openPlanForScope, openOnboarding]);
   return (
     <div className="app">
       <Header
@@ -3994,6 +4068,8 @@ export default function App() {
         theme={theme}
         profileComplete={isProfileComplete(profile)}
         onboardingVisible={onboardingVisible}
+        apiLive={data?.source === "api"}
+        openOnboarding={openOnboarding}
         toggleTheme={() => setTheme(current => current === "light" ? "dark" : "light")}
       />
       <main>{page}</main>

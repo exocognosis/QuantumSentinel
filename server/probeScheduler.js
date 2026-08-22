@@ -71,18 +71,24 @@ function normalizeName(name) {
 function normalizeProbeRequest(input) {
   const request = validateProbeRequest(input);
 
-  if (request.mode === "simulate") {
-    return {
-      mode: "simulate",
-      assetId: request.asset.id,
-    };
-  }
-
   if (request.mode === "discovery") {
     return {
       mode: "discovery",
       hosts: clone(request.hosts),
+      ports: clone(request.ports),
       port: request.port,
+      concurrency: request.concurrency,
+      timeoutMs: request.timeoutMs,
+    };
+  }
+
+  if (request.mode === "device") {
+    return {
+      mode: "device",
+      scope: request.scope,
+      hosts: clone(request.hosts),
+      ports: clone(request.ports),
+      discoverActivePorts: request.discoverActivePorts,
       timeoutMs: request.timeoutMs,
     };
   }

@@ -7,9 +7,6 @@ import {
   loadMonitorPolicies,
   loadMonitorPolicyRuns,
   loadMonitorRuns,
-  monitorFallbackHealth,
-  monitorFallbackPolicies,
-  monitorFallbackRuns,
   normalizeMonitorHealth,
   normalizeMonitorPolicy,
   normalizeMonitorRun,
@@ -137,7 +134,7 @@ test("createMonitorPolicy posts a JSON policy and normalizes the created policy"
   assert.deepEqual(policy.probeRequest, request.probeRequest);
 });
 
-test("createMonitorPolicy returns a local policy when the API is unavailable", async () => {
+test("createMonitorPolicy surfaces API failure", async () => {
   const request = {
     name: "Offline Discovery",
     enabled: true,
@@ -149,15 +146,12 @@ test("createMonitorPolicy returns a local policy when the API is unavailable", a
     },
   };
 
-  const policy = await createMonitorPolicy(request, {
-    fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
-  });
-
-  assert.equal(policy.id, "local-monitor-policy");
-  assert.equal(policy.name, "Offline Discovery");
-  assert.equal(policy.enabled, true);
-  assert.equal(policy.intervalSeconds, 1200);
-  assert.deepEqual(policy.probeRequest, request.probeRequest);
+  await assert.rejects(
+    () => createMonitorPolicy(request, {
+      fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
+    }),
+    /Request failed/,
+  );
 });
 
 test("runMonitorPolicyNow accepts nested policy plus job payloads", async () => {
@@ -265,19 +259,14 @@ test("runMonitorPolicyNow accepts job-only payloads", async () => {
   assert.equal(result.job.status, "QUEUED");
 });
 
-test("runMonitorPolicyNow returns a local job when the API is unavailable", async () => {
-  const result = await runMonitorPolicyNow("fallback-discovery-edge", {
+test("runMonitorPolicyNow returns no run when the API is unavailable", async () => {
+  const result = await runMonitorPolicyNow("monitor-missing", {
     fetcher: async () => {
       throw new Error("offline");
     },
   });
 
-  assert.equal(result.policy?.id, "fallback-discovery-edge");
-  assert.equal(result.job.id, "local-monitor-run");
-  assert.equal(result.job.status, "QUEUED");
-  assert.equal(result.job.type, "discovery");
-  assert.equal(result.run.policyId, "fallback-discovery-edge");
-  assert.equal(result.run.status, "QUEUED");
+  assert.deepEqual(result, { policy: null, job: null, run: null });
 });
 
 test("loadMonitorRuns fetches and normalizes global run history", async () => {
@@ -434,25 +423,22 @@ test("monitor run and health normalizers clamp flexible missing fields", () => {
   });
 });
 
-test("loadMonitorPolicies falls back to cloned sample policies when monitors are unavailable", async () => {
+test("loadMonitorPolicies returns no policies when monitors are unavailable", async () => {
   const policies = await loadMonitorPolicies({
     fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
   });
 
-  assert.deepEqual(policies, monitorFallbackPolicies);
-  assert.notEqual(policies, monitorFallbackPolicies);
-
-  policies[0].name = "MUTATED";
   const nextPolicies = await loadMonitorPolicies({
     fetcher: async () => {
       throw new Error("offline");
     },
   });
 
-  assert.equal(nextPolicies[0].name, monitorFallbackPolicies[0].name);
+  assert.deepEqual(policies, []);
+  assert.deepEqual(nextPolicies, []);
 });
 
-test("monitor run history and health fall back to cloned samples when APIs are unavailable", async () => {
+test("monitor run history and health return empty state when APIs are unavailable", async () => {
   const runs = await loadMonitorRuns({
     fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
   });
@@ -462,16 +448,17 @@ test("monitor run history and health fall back to cloned samples when APIs are u
     },
   });
 
-  assert.deepEqual(runs, monitorFallbackRuns);
-  assert.notEqual(runs, monitorFallbackRuns);
-  assert.deepEqual(health, monitorFallbackHealth);
-  assert.notEqual(health, monitorFallbackHealth);
-
-  runs[0].status = "MUTATED";
-  health.enabledPolicies = 0;
-
-  assert.equal((await loadMonitorRuns({ fetcher: null }))[0].status, monitorFallbackRuns[0].status);
-  assert.equal((await loadMonitorHealth({ fetcher: null })).enabledPolicies, monitorFallbackHealth.enabledPolicies);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(health, {
+    totalPolicies: 0,
+    enabledPolicies: 0,
+    duePolicies: 0,
+    runningRuns: 0,
+    failedRecentRuns: 0,
+    lastRunAt: null,
+  });
+  assert.deepEqual(await loadMonitorRuns({ fetcher: null }), []);
+  assert.equal((await loadMonitorHealth({ fetcher: null })).enabledPolicies, 0);
 });
 
 test("normalizeMonitorPolicy clamps missing and invalid fields", () => {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 
-import { ASSETS } from "../src/mockData.js";
+import { ASSETS } from "../test-fixtures/mockData.js";
 import { QuantumSentinelDatastore, buildCbomFromAssets, createDatastore } from "./datastore.js";
 
 async function withTempStore(testName, fn, options = {}) {
@@ -16,6 +16,7 @@ async function withTempStore(testName, fn, options = {}) {
       backend: options.backend ?? "auto",
       filePath,
       now: options.now,
+      seedAssets: options.seedAssets ?? ASSETS,
     });
 
     try {
@@ -61,7 +62,7 @@ test("records asset history when seed or probe observations upsert assets", asyn
 
     const history = await store.listAssetHistory(1);
     assert.equal(history.length, 2);
-    assert.equal(history[0].source, "seed");
+    assert.equal(history[0].source, "initial-import");
     assert.equal(history[1].source, "probe");
     assert.equal(history[1].reason, "tls-observation");
     assert.equal(history[1].asset.algo, "X25519+ML-KEM");
@@ -420,6 +421,7 @@ test("persists assets, history, findings, probes, and snapshots across reopen", 
     const first = await createDatastore({
       filePath,
       now: () => "2026-06-03T14:00:00.000Z",
+      seedAssets: ASSETS,
     });
 
     await first.upsertAsset({
@@ -442,15 +444,15 @@ test("persists assets, history, findings, probes, and snapshots across reopen", 
     });
     const probe = await first.createProbeJob({
       id: "probe-42",
-      mode: "simulate",
+      mode: "tls",
       status: "completed",
-      target: { assetId: 15, hostname: "plc-boiler-ctrl-07" },
+      target: { assetId: 15, host: "127.0.0.1", port: 443 },
       result: { classification: { label: "DEPRECATED" } },
     });
     const monitor = await first.createMonitorPolicy({
       name: "PLC crypto check",
       enabled: false,
-      probeRequest: { mode: "simulate", assetId: 15 },
+      probeRequest: { mode: "tls", host: "127.0.0.1", port: 443, assetId: 15, timeoutMs: 100 },
       intervalSeconds: 600,
       nextRunAt: "2026-06-03T14:10:00.000Z",
     });
@@ -508,7 +510,7 @@ test("json backend uses the same public API for runtimes without node:sqlite", a
     await store.createFinding({ assetId: 1, severity: "LOW", type: "PQC", title: "Pilot verified" });
     await store.createMonitorPolicy({
       name: "JSON monitor",
-      probeRequest: { mode: "simulate", assetId: 1 },
+      probeRequest: { mode: "tls", host: "127.0.0.1", port: 443, assetId: 1, timeoutMs: 100 },
       intervalSeconds: 120,
     });
     await store.createMonitorRun({

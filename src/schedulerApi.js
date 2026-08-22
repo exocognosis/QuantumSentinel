@@ -5,7 +5,7 @@ const SCHEDULER_CONFIG_ENDPOINT = "/api/scheduler/config";
 const DEFAULT_TICK_INTERVAL_SECONDS = 900;
 const DEFAULT_MAX_RUNS_PER_TICK = 2;
 
-export const schedulerFallbackStatus = {
+export const unavailableSchedulerStatus = {
   running: false,
   enabled: false,
   tickIntervalSeconds: DEFAULT_TICK_INTERVAL_SECONDS,
@@ -99,9 +99,9 @@ async function fetchJson(fetcher, path, options = {}) {
   return response.json();
 }
 
-function fallbackStatus(overrides = {}) {
+function unavailableStatus(overrides = {}) {
   return {
-    ...clone(schedulerFallbackStatus),
+    ...clone(unavailableSchedulerStatus),
     ...overrides,
   };
 }
@@ -110,7 +110,7 @@ export function normalizeSchedulerStatus(payload) {
   const source = getStatusPayload(payload);
   const running = toBoolean(
     source.running ?? source.active ?? source.started ?? source.isRunning ?? source.is_running ?? source.state ?? source.status,
-    schedulerFallbackStatus.running,
+    unavailableSchedulerStatus.running,
   );
   const enabled = toBoolean(
     source.enabled ?? source.schedulerEnabled ?? source.scheduler_enabled ?? source.isEnabled ?? source.is_enabled,
@@ -123,12 +123,12 @@ export function normalizeSchedulerStatus(payload) {
     tickIntervalSeconds: toPositiveInteger(
       source.tickIntervalSeconds ?? source.tick_interval_seconds ?? source.intervalSeconds ?? source.interval_seconds
         ?? source.interval ?? source.cadenceSeconds ?? source.cadence_seconds,
-      schedulerFallbackStatus.tickIntervalSeconds,
+      unavailableSchedulerStatus.tickIntervalSeconds,
     ),
     maxRunsPerTick: toPositiveInteger(
       source.maxRunsPerTick ?? source.max_runs_per_tick ?? source.maxRuns ?? source.max_runs
         ?? source.runLimit ?? source.run_limit ?? source.limit,
-      schedulerFallbackStatus.maxRunsPerTick,
+      unavailableSchedulerStatus.maxRunsPerTick,
     ),
     lastTickAt: source.lastTickAt ?? source.last_tick_at ?? source.lastRunAt ?? source.last_run_at ?? null,
     lastTickResult: source.lastTickResult ?? source.last_tick_result ?? source.tickResult ?? source.tick_result ?? null,
@@ -161,7 +161,7 @@ export async function loadSchedulerStatus(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackStatus();
+    return unavailableStatus();
   }
 
   try {
@@ -171,16 +171,16 @@ export async function loadSchedulerStatus(options = {}) {
     });
     return normalizeSchedulerStatus(payload);
   } catch {
-    return fallbackStatus();
+    return unavailableStatus();
   }
 }
 
-async function postSchedulerControl(path, fallbackOverrides, options = {}) {
+async function postSchedulerControl(path, unavailableOverrides, options = {}) {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackStatus(fallbackOverrides);
+    return unavailableStatus(unavailableOverrides);
   }
 
   try {
@@ -191,7 +191,7 @@ async function postSchedulerControl(path, fallbackOverrides, options = {}) {
     });
     return normalizeSchedulerStatus(payload);
   } catch {
-    return fallbackStatus(fallbackOverrides);
+    return unavailableStatus(unavailableOverrides);
   }
 }
 
@@ -209,13 +209,10 @@ export async function tickSchedulerNow(options = {}) {
 
   if (typeof fetcher !== "function") {
     return {
-      status: fallbackStatus({
-        lastTickAt: new Date().toISOString(),
-        lastTickResult: "Local scheduler tick queued",
-      }),
+      status: unavailableStatus({ lastTickResult: "Scheduler API unavailable" }),
       result: null,
       runs: [],
-      summary: "Local scheduler tick queued",
+      summary: "Scheduler API unavailable",
     };
   }
 
@@ -228,13 +225,10 @@ export async function tickSchedulerNow(options = {}) {
     return normalizeTickPayload(payload);
   } catch {
     return {
-      status: fallbackStatus({
-        lastTickAt: new Date().toISOString(),
-        lastTickResult: "Local scheduler tick queued",
-      }),
+      status: unavailableStatus({ lastTickResult: "Scheduler API unavailable" }),
       result: null,
       runs: [],
-      summary: "Local scheduler tick queued",
+      summary: "Scheduler API unavailable",
     };
   }
 }
@@ -243,12 +237,12 @@ export async function updateSchedulerConfig(config, options = {}) {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "";
   const request = {
-    tickIntervalSeconds: toPositiveInteger(config?.tickIntervalSeconds ?? config?.tick_interval_seconds, schedulerFallbackStatus.tickIntervalSeconds),
-    maxRunsPerTick: toPositiveInteger(config?.maxRunsPerTick ?? config?.max_runs_per_tick, schedulerFallbackStatus.maxRunsPerTick),
+    tickIntervalSeconds: toPositiveInteger(config?.tickIntervalSeconds ?? config?.tick_interval_seconds, unavailableSchedulerStatus.tickIntervalSeconds),
+    maxRunsPerTick: toPositiveInteger(config?.maxRunsPerTick ?? config?.max_runs_per_tick, unavailableSchedulerStatus.maxRunsPerTick),
   };
 
   if (typeof fetcher !== "function") {
-    return fallbackStatus(request);
+    return unavailableStatus(request);
   }
 
   const fetchConfig = (method) => fetchJson(fetcher, SCHEDULER_CONFIG_ENDPOINT, {
@@ -265,23 +259,23 @@ export async function updateSchedulerConfig(config, options = {}) {
     return normalizeSchedulerStatus(await fetchConfig("PATCH"));
   } catch (error) {
     if (![404, 405, 501].includes(error.status)) {
-      return fallbackStatus(request);
+      return unavailableStatus(request);
     }
   }
 
   try {
     return normalizeSchedulerStatus(await fetchConfig("POST"));
   } catch {
-    return fallbackStatus(request);
+    return unavailableStatus(request);
   }
 }
 
 export default {
   loadSchedulerStatus,
   normalizeSchedulerStatus,
-  schedulerFallbackStatus,
   startScheduler,
   stopScheduler,
   tickSchedulerNow,
+  unavailableSchedulerStatus,
   updateSchedulerConfig,
 };

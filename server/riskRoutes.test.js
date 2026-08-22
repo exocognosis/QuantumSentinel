@@ -5,13 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { ASSETS } from "../src/mockData.js";
+import { ASSETS } from "../test-fixtures/mockData.js";
 import { createApiServer } from "./app.js";
 import { createDatastore } from "./datastore.js";
 
 async function listen() {
   const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-risk-routes-"));
-  const datastore = await createDatastore({ filePath: join(dir, "datastore.db") });
+  const datastore = await createDatastore({ filePath: join(dir, "datastore.db"), seedAssets: ASSETS });
   const server = createApiServer({ datastore });
 
   server.listen(0, "127.0.0.1");

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { ASSETS } from "../src/mockData.js";
+import { ASSETS } from "../test-fixtures/mockData.js";
 import { createApiServer } from "./app.js";
 import { createDatastore } from "./datastore.js";
 
@@ -25,7 +25,7 @@ async function listen(options = {}) {
 
 async function listenWithDatastore() {
   const dir = await mkdtemp(join(tmpdir(), "quantumsentinel-reports-"));
-  const datastore = await createDatastore({ filePath: join(dir, "datastore.db") });
+  const datastore = await createDatastore({ filePath: join(dir, "datastore.db"), seedAssets: ASSETS });
   const api = await listen({ datastore });
 
   return {
@@ -76,15 +76,15 @@ test("lists available JSON report packages", async () => {
   }
 });
 
-test("serves seed-backed report packages when no datastore is configured", async () => {
+test("serves empty report packages when no datastore is configured", async () => {
   const api = await listen();
 
   try {
     const executive = await getJson(api.baseUrl, "/api/reports/executive");
     assert.equal(executive.response.status, 200);
     assertReportPackage(executive.body.data, "executive");
-    assert.equal(executive.body.data.scope.source, "seed");
-    assert.equal(executive.body.data.summary.assets.total, ASSETS.length);
+    assert.equal(executive.body.data.scope.source, "none");
+    assert.equal(executive.body.data.summary.assets.total, 0);
     assert.deepEqual(
       executive.body.data.sections.map((section) => section.id),
       ["portfolio-posture", "critical-exposure", "migration-readiness"],
@@ -157,8 +157,8 @@ test("builds compliance, CBOM, and full report packages with evidence references
     const compliance = await getJson(api.baseUrl, "/api/reports/compliance");
     assert.equal(compliance.response.status, 200);
     assertReportPackage(compliance.body.data, "compliance");
-    assert.ok(compliance.body.data.sections.find((section) => section.id === "controls").items.length > 0);
-    assert.ok(compliance.body.data.evidenceRefs.some((ref) => ref.kind === "compliance-control"));
+    assert.deepEqual(compliance.body.data.sections.find((section) => section.id === "controls").items, []);
+    assert.equal(compliance.body.data.evidenceRefs.some((ref) => ref.kind === "compliance-control"), false);
 
     const cbom = await getJson(api.baseUrl, "/api/reports/cbom");
     assert.equal(cbom.response.status, 200);

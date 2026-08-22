@@ -5,7 +5,6 @@ import {
   loadReport,
   loadReports,
   normalizeReport,
-  reportFallbackReports,
 } from "./reportApi.js";
 
 function jsonResponse(body, options = {}) {
@@ -167,22 +166,19 @@ test("loadReport uses the requested type when the payload omits type", async () 
   assert.deepEqual(report.summary, { algorithms: 7 });
 });
 
-test("loadReport falls back to cloned fallback reports when unavailable", async () => {
+test("loadReport returns null when unavailable", async () => {
   const report = await loadReport("executive", {
     fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
   });
 
-  assert.equal(report.type, "executive");
-  assert.notEqual(report, reportFallbackReports[0]);
-
-  report.sections[0].title = "MUTATED";
   const nextReport = await loadReport("executive", {
     fetcher: async () => {
       throw new Error("offline");
     },
   });
 
-  assert.equal(nextReport.sections[0].title, reportFallbackReports[0].sections[0].title);
+  assert.equal(report, null);
+  assert.equal(nextReport, null);
 });
 
 test("normalizeReport fills operational defaults for sparse reports", () => {
@@ -198,15 +194,11 @@ test("normalizeReport fills operational defaults for sparse reports", () => {
   assert.deepEqual(report.evidenceRefs, []);
 });
 
-test("loadReports returns cloned fallback reports without fetch", async () => {
+test("loadReports returns no reports without fetch", async () => {
   const result = await loadReports({ fetcher: null });
 
-  assert.equal(result.count, reportFallbackReports.length);
-  assert.deepEqual(result.reports, reportFallbackReports);
-  assert.notEqual(result.reports, reportFallbackReports);
-
-  result.reports[0].title = "MUTATED";
   const nextResult = await loadReports({ fetcher: null });
 
-  assert.equal(nextResult.reports[0].title, reportFallbackReports[0].title);
+  assert.deepEqual(result, { reports: [], count: 0 });
+  assert.deepEqual(nextResult, { reports: [], count: 0 });
 });

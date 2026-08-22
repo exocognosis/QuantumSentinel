@@ -72,21 +72,14 @@ test("loadAssetRisk fetches and normalizes flexible risk analysis payloads", asy
   assert.equal(risk.remediation.target, "ML-KEM-768");
 });
 
-test("loadAssetRisk falls back to local asset analysis when the API is unavailable", async () => {
+test("loadAssetRisk returns null when the API is unavailable", async () => {
   const risk = await loadAssetRisk(1, {
     fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
   });
 
-  assert.equal(risk.asset.id, "1");
-  assert.equal(risk.asset.hostname, "api-gateway-prod-01");
-  assert.equal(risk.classification.label, "SHOR-CRITICAL");
-  assert.equal(risk.scores.risk, 94);
-  assert.equal(risk.remediation.target, "ML-KEM-768 + ML-DSA-65");
-  assert.equal(risk.source, "fallback");
-
-  risk.asset.hostname = "MUTATED";
   const nextRisk = await loadAssetRisk(1, { fetcher: null });
-  assert.equal(nextRisk.asset.hostname, "api-gateway-prod-01");
+  assert.equal(risk, null);
+  assert.equal(nextRisk, null);
 });
 
 test("normalizeAssetRisk handles direct analysis-shaped payloads", () => {

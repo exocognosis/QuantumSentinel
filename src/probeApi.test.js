@@ -7,14 +7,13 @@ import {
   getProbeJob,
   loadProbeJobs,
   normalizeProbeJob,
-  probeFallbackJobs,
 } from "./probeApi.js";
 
 test("buildRescanRequest reconstructs real TLS and discovery requests from older jobs", () => {
   assert.deepEqual(buildRescanRequest({
     type: "tls",
     target: { host: "ecc256.badssl.com", port: 443 },
-    targetLabel: "ecc256.badssl.com:443",
+    targetLabel: "ecc256.badssl.com",
     request: {},
   }), {
     mode: "tls",
@@ -84,7 +83,7 @@ test("loadProbeJobs fetches probe jobs and normalizes API fields", async () => {
       name: "TLS Handshake Probe",
       type: "tls-handshake",
       target: "api.example.test:443",
-      targetLabel: "api.example.test:443",
+      targetLabel: "api.example.test",
       status: "RUNNING",
       progress: 42,
       createdAt: "2026-05-31T12:00:00.000Z",
@@ -191,6 +190,32 @@ test("normalizeProbeJob labels discovery requests and summarizes host targets", 
   });
 });
 
+test("normalizeProbeJob hides default TLS port and keeps non-default ports", () => {
+  assert.equal(normalizeProbeJob({
+    id: "tls-default",
+    type: "tls",
+    target: { host: "WWW.CNN.COM", port: 443 },
+  }).targetLabel, "www.cnn.com");
+
+  assert.equal(normalizeProbeJob({
+    id: "tls-string-default",
+    type: "tls",
+    target: "WWW.CNN.COM:443",
+  }).targetLabel, "www.cnn.com");
+
+  assert.equal(normalizeProbeJob({
+    id: "tls-alt",
+    type: "tls",
+    target: { host: "www.cnn.com", port: 8443 },
+  }).targetLabel, "www.cnn.com:8443");
+
+  assert.equal(normalizeProbeJob({
+    id: "tls-string-alt",
+    type: "tls",
+    target: "www.cnn.com:8443",
+  }).targetLabel, "www.cnn.com:8443");
+});
+
 test("getProbeJob fetches an encoded job id and normalizes nested job payloads", async () => {
   const calls = [];
   const fetcher = async (url, options) => {
@@ -228,20 +253,18 @@ test("getProbeJob fetches an encoded job id and normalizes nested job payloads",
   assert.equal(job.riskScore, 64);
 });
 
-test("loadProbeJobs falls back to cloned mock jobs when probes are unavailable", async () => {
+test("loadProbeJobs returns no jobs when probes are unavailable", async () => {
   const jobs = await loadProbeJobs({
     fetcher: async () => jsonResponse({ error: "Not found" }, { ok: false, status: 404 }),
   });
 
-  assert.deepEqual(jobs, probeFallbackJobs);
-  assert.notEqual(jobs, probeFallbackJobs);
+  assert.deepEqual(jobs, []);
 
-  jobs[0].status = "MUTATED";
   const nextJobs = await loadProbeJobs({
     fetcher: async () => {
       throw new Error("offline");
     },
   });
 
-  assert.equal(nextJobs[0].status, probeFallbackJobs[0].status);
+  assert.deepEqual(nextJobs, []);
 });

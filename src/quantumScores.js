@@ -36,7 +36,7 @@ export function deriveQuantumScores(data = {}) {
   );
 
   const coverage = clamp(readinessComponents.inventoryCoverage);
-  const confidence = !total || data.isFallback ? "Low" : coverage >= 90 && total >= 10 ? "Medium" : "Low";
+  const confidence = !total ? "Low" : coverage >= 90 && total >= 10 ? "Medium" : "Low";
 
   return {
     readiness: { assessed: total > 0, score: readiness, classification: total > 0 ? readinessClassification(readiness) : "Not yet assessed", direction: "Higher is better", components: readinessComponents },

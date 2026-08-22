@@ -2,8 +2,6 @@ import net from "node:net";
 import tls from "node:tls";
 import { execFile } from "node:child_process";
 
-import { ASSETS } from "../src/mockData.js";
-
 const DEFAULT_TLS_PORT = 443;
 const DEFAULT_TLS_TIMEOUT_MS = 5_000;
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 1_000;
@@ -94,9 +92,12 @@ function parseDiscoveryTimeoutMs(timeoutMs) {
 }
 
 function normalizeMode(input) {
-  const mode = input.mode ?? (input.host ? "tls" : "simulate");
-  if (mode !== "simulate" && mode !== "tls" && mode !== "discovery" && mode !== "device") {
-    throw new ProbeValidationError("mode must be simulate, tls, discovery, or device");
+  if (input.mode == null && input.assetId != null && !input.host) {
+    throw new ProbeValidationError("mode must be tls, discovery, or device");
+  }
+  const mode = input.mode ?? (input.host ? "tls" : "device");
+  if (mode !== "tls" && mode !== "discovery" && mode !== "device") {
+    throw new ProbeValidationError("mode must be tls, discovery, or device");
   }
   return mode;
 }
@@ -137,20 +138,6 @@ function validateProbeInput(input) {
 
   const mode = normalizeMode(input);
 
-  if (mode === "simulate") {
-    if (input.assetId === undefined || input.assetId === null || input.assetId === "") {
-      throw new ProbeValidationError("assetId is required for simulated probes");
-    }
-
-    const assetId = parseAssetId(input.assetId);
-    const asset = ASSETS.find((candidate) => candidate.id === assetId);
-    if (!asset) {
-      throw new ProbeValidationError("Asset not found");
-    }
-
-    return { mode, asset };
-  }
-
   if (mode === "discovery") {
     const ports = parsePorts(input.ports, input.port);
     return {
@@ -165,8 +152,9 @@ function validateProbeInput(input) {
   }
 
   if (mode === "device") {
-    const scope = input.scope === "localhost" ? ["localhost"] : input.scope === "ipv4" ? ["127.0.0.1"] : ["127.0.0.1", "localhost"];
-    return { mode, hosts: scope, ports: parsePorts(input.ports, input.port), discoverActivePorts: input.discoverActivePorts !== false, concurrency: 4, timeoutMs: parseDiscoveryTimeoutMs(input.timeoutMs) };
+    const scopeName = input.scope === "localhost" ? "localhost" : input.scope === "ipv4" ? "ipv4" : "both";
+    const scope = scopeName === "localhost" ? ["localhost"] : scopeName === "ipv4" ? ["127.0.0.1"] : ["127.0.0.1", "localhost"];
+    return { mode, scope: scopeName, hosts: scope, ports: parsePorts(input.ports, input.port), discoverActivePorts: input.discoverActivePorts !== false, concurrency: 4, timeoutMs: parseDiscoveryTimeoutMs(input.timeoutMs) };
   }
 
   if (typeof input.host !== "string" || input.host.trim() === "") {
@@ -226,36 +214,6 @@ function classifyMetadata({ algorithm, protocolName, pfs, expired = false }) {
   }
 
   return { label, priority, quantumVulnerable, notes };
-}
-
-function simulatedResult(asset) {
-  const classification = classifyMetadata({
-    algorithm: asset.algo,
-    protocolName: asset.proto,
-    pfs: asset.pfs,
-    expired: asset.cert_exp !== "N/A" && Date.parse(asset.cert_exp) < Date.now(),
-  });
-
-  return {
-    observedAt: isoNow(),
-    source: "seed",
-    protocol: {
-      name: asset.proto,
-      perfectForwardSecrecy: asset.pfs,
-    },
-    certificate: {
-      subject: asset.hostname,
-      issuer: "QuantumSentinel seed inventory",
-      algorithm: asset.algo,
-      expiresAt: asset.cert_exp,
-    },
-    classification: {
-      ...classification,
-      label: asset.cls,
-      priority: asset.prio,
-    },
-    findings: classification.notes,
-  };
 }
 
 function certificateName(name = {}) {
@@ -536,15 +494,6 @@ function makeJob({ mode, asset, assetId, host, hosts, port, ports, concurrency, 
     updatedAt: now,
     completedAt: null,
     target: (() => {
-      if (mode === "simulate") {
-        return {
-          assetId: asset.id,
-          hostname: asset.hostname,
-          ip: asset.ip,
-          type: asset.type,
-        };
-      }
-
       if (mode === "discovery" || mode === "device") {
         return expandedScope || mode === "device" ? { hosts, ports, port: ports[0], concurrency } : { hosts, port };
       }
@@ -601,9 +550,7 @@ export async function createProbeJob(input) {
   jobs.set(job.id, job);
 
   try {
-    const result = request.mode === "simulate"
-      ? simulatedResult(request.asset)
-      : request.mode === "discovery"
+    const result = request.mode === "discovery"
         ? await discoveryResult(request)
         : request.mode === "device"
           ? await deviceResult(request)

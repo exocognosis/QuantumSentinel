@@ -2,8 +2,6 @@ import { mkdir, open as openFile, readFile, rename, rm } from "node:fs/promises"
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 
-import { ASSETS } from "../src/mockData.js";
-
 const STORE_VERSION = 1;
 const DEFAULT_BACKEND = "auto";
 const FINDING_PREFIX = "finding";
@@ -1479,7 +1477,7 @@ export class QuantumSentinelDatastore {
   constructor({
     backend = DEFAULT_BACKEND,
     filePath,
-    seedAssets = ASSETS,
+    seedAssets = [],
     now = isoNow,
   } = {}) {
     if (!filePath) {
@@ -1536,7 +1534,7 @@ export class QuantumSentinelDatastore {
     for (const seedAsset of this.seedAssets) {
       const asset = normalizeAsset(seedAsset);
       await this.backend.upsertAsset(asset, {
-        source: "seed",
+        source: "initial-import",
         reason: "initialization",
         observedAt: this.now(),
       });

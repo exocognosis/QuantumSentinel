@@ -1,47 +1,6 @@
 const PROBES_ENDPOINT = "/api/probes";
 
-export const probeFallbackJobs = [
-  {
-    id: "fallback-tls-gateway",
-    name: "TLS Handshake Probe",
-    type: "tls-handshake",
-    target: "api-gateway-prod-01:443",
-    status: "COMPLETED",
-    progress: 100,
-    createdAt: "2026-05-31T12:00:00.000Z",
-    updatedAt: "2026-05-31T12:02:30.000Z",
-    completedAt: "2026-05-31T12:02:30.000Z",
-    findingsCount: 2,
-    riskScore: 82,
-    error: "",
-    request: {
-      target: "api-gateway-prod-01:443",
-      type: "tls-handshake",
-    },
-    result: {
-      summary: "RSA certificate chain detected on production TLS endpoint.",
-    },
-  },
-  {
-    id: "fallback-certificate-ca",
-    name: "Certificate Audit Probe",
-    type: "certificate-audit",
-    target: "ca-root-internal",
-    status: "QUEUED",
-    progress: 0,
-    createdAt: "2026-05-31T12:10:00.000Z",
-    updatedAt: null,
-    completedAt: null,
-    findingsCount: 0,
-    riskScore: 0,
-    error: "",
-    request: {
-      target: "ca-root-internal",
-      type: "certificate-audit",
-    },
-    result: null,
-  },
-];
+export const unavailableProbeJobs = [];
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -120,7 +79,7 @@ async function fetchJson(fetcher, path, options = {}) {
       const payload = await response.json();
       detail = String(payload?.error || payload?.message || "").trim();
     } catch {
-      // Preserve the status-only fallback when the server does not return JSON.
+      // Keep the HTTP status when the server does not return JSON.
     }
     throw new Error(detail || `Request failed for ${path}: ${response.status}`);
   }
@@ -128,8 +87,8 @@ async function fetchJson(fetcher, path, options = {}) {
   return response.json();
 }
 
-function fallbackJobs() {
-  return clone(probeFallbackJobs);
+function unavailableJobs() {
+  return clone(unavailableProbeJobs);
 }
 
 function normalizeTarget(value) {
@@ -137,15 +96,26 @@ function normalizeTarget(value) {
   return value ?? null;
 }
 
+function displayTargetString(value) {
+  const text = String(value).trim();
+  const hostPort = text.match(/^([^,[\]\s]+):(\d+)$/);
+  if (!hostPort) return text;
+  const [, host, portText] = hostPort;
+  const port = Number(portText);
+  if (!Number.isInteger(port) || port <= 0) return text;
+  return port === 443 ? host.toLowerCase() : `${host.toLowerCase()}:${port}`;
+}
+
 function targetLabel(value) {
   if (value == null || value === "") return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return displayTargetString(value);
   if (Array.isArray(value)) return value.map(targetLabel).filter(Boolean).join(", ");
   if (typeof value === "object") {
     if (Array.isArray(value.hosts)) return value.hosts.join(", ");
     const host = value.hostname ?? value.host ?? value.ip ?? value.name ?? value.id;
-    const port = value.port ? `:${value.port}` : "";
-    return host ? `${host}${port}` : JSON.stringify(value);
+    const parsedPort = Number(value.port);
+    const port = Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort !== 443 ? `:${parsedPort}` : "";
+    return host ? `${String(host).toLowerCase()}${port}` : JSON.stringify(value);
   }
   return String(value);
 }
@@ -231,7 +201,7 @@ export async function loadProbeJobs(options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackJobs();
+    return unavailableJobs();
   }
 
   try {
@@ -241,7 +211,7 @@ export async function loadProbeJobs(options = {}) {
     });
     return getArrayPayload(payload).map((job, index) => normalizeProbeJob(job, index));
   } catch {
-    return fallbackJobs();
+    return unavailableJobs();
   }
 }
 
@@ -250,12 +220,7 @@ export async function createProbeJob(request, options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return normalizeProbeJob({
-      ...request,
-      id: "local-probe-job",
-      status: "queued",
-      request,
-    });
+    throw new Error("Probe API is unavailable");
   }
 
   const payload = await fetchJson(fetcher, PROBES_ENDPOINT, {
@@ -276,7 +241,7 @@ export async function getProbeJob(id, options = {}) {
   const baseUrl = options.baseUrl ?? "";
 
   if (typeof fetcher !== "function") {
-    return fallbackJobs().find((job) => job.id === String(id)) ?? null;
+    return unavailableJobs().find((job) => job.id === String(id)) ?? null;
   }
 
   const payload = await fetchJson(fetcher, `${PROBES_ENDPOINT}/${encodeURIComponent(id)}`, {
@@ -292,5 +257,5 @@ export default {
   createProbeJob,
   getProbeJob,
   buildRescanRequest,
-  probeFallbackJobs,
+  unavailableProbeJobs,
 };

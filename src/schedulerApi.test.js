@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   loadSchedulerStatus,
   normalizeSchedulerStatus,
-  schedulerFallbackStatus,
+  unavailableSchedulerStatus,
   startScheduler,
   stopScheduler,
   tickSchedulerNow,
@@ -189,18 +189,18 @@ test("updateSchedulerConfig patches JSON config and falls back to POST when PATC
   assert.equal(status.maxRunsPerTick, 5);
 });
 
-test("scheduler status falls back to a cloned local status when unavailable", async () => {
+test("scheduler status returns a cloned unavailable status when offline", async () => {
   const unavailable = await loadSchedulerStatus({
     fetcher: async () => jsonResponse({ error: "offline" }, { ok: false, status: 503 }),
   });
   const missingFetch = await loadSchedulerStatus({ fetcher: null });
 
-  assert.deepEqual(unavailable, schedulerFallbackStatus);
-  assert.notEqual(unavailable, schedulerFallbackStatus);
-  assert.deepEqual(missingFetch, schedulerFallbackStatus);
+  assert.deepEqual(unavailable, unavailableSchedulerStatus);
+  assert.notEqual(unavailable, unavailableSchedulerStatus);
+  assert.deepEqual(missingFetch, unavailableSchedulerStatus);
 
   unavailable.running = true;
-  assert.equal((await loadSchedulerStatus({ fetcher: null })).running, schedulerFallbackStatus.running);
+  assert.equal((await loadSchedulerStatus({ fetcher: null })).running, unavailableSchedulerStatus.running);
 });
 
 test("normalizeSchedulerStatus accepts alternate config names and clamps invalid values", () => {
@@ -215,8 +215,8 @@ test("normalizeSchedulerStatus accepts alternate config names and clamps invalid
   assert.deepEqual(status, {
     running: true,
     enabled: false,
-    tickIntervalSeconds: schedulerFallbackStatus.tickIntervalSeconds,
-    maxRunsPerTick: schedulerFallbackStatus.maxRunsPerTick,
+    tickIntervalSeconds: unavailableSchedulerStatus.tickIntervalSeconds,
+    maxRunsPerTick: unavailableSchedulerStatus.maxRunsPerTick,
     lastTickAt: null,
     lastTickResult: null,
     scanWindow: "rolling",

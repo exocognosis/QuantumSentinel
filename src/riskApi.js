@@ -1,5 +1,3 @@
-import { ASSETS as FALLBACK_ASSETS } from "./mockData.js";
-
 const DRIFT_FALLBACK = { driftDetected: false, count: 0, assets: [] };
 
 function clone(value) {
@@ -207,37 +205,6 @@ export function normalizeAssetRisk(payload = {}, options = {}) {
   };
 }
 
-function fallbackRiskForAsset(assetId) {
-  const asset = FALLBACK_ASSETS.find((item) => String(item.id) === String(assetId) || item.hostname === String(assetId));
-  if (!asset) return null;
-  return normalizeAssetRisk({
-    asset: clone(asset),
-    analysis: {
-      classification: { label: asset.cls, priority: asset.prio },
-      scores: { hndl: asset.hndl, tnfl: asset.tnfl, risk: asset.risk },
-      riskDrivers: [
-        { label: `${asset.algo} exposure`, score: asset.risk },
-        { label: `${asset.segment} ${asset.type}`, score: Math.max(asset.hndl, asset.tnfl) },
-      ],
-      remediation: {
-        action: asset.cls === "QUANTUM-SAFE" ? "Monitor quantum-safe control" : "Migrate cryptographic control",
-        target: asset.migration,
-        detail: "Fallback analysis uses the local asset inventory until the risk endpoint is available.",
-        complexity: asset.complexity,
-      },
-      evidence: {
-        algorithm: asset.algo,
-        protocol: asset.proto,
-        perfectForwardSecrecy: asset.pfs,
-        type: asset.type,
-        segment: asset.segment,
-      },
-    },
-    drift: clone(DRIFT_FALLBACK),
-    findings: [],
-  }, { source: "fallback" });
-}
-
 export function normalizeRecomputeRiskResult(payload = {}) {
   const source = unwrapData(payload) ?? {};
   const rawAnalyses = Array.isArray(source.analyses)
@@ -295,9 +262,8 @@ export async function loadDrift(options = {}) {
 export async function loadAssetRisk(assetId, options = {}) {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "";
-  const fallback = fallbackRiskForAsset(assetId);
 
-  if (typeof fetcher !== "function") return fallback;
+  if (typeof fetcher !== "function") return null;
 
   try {
     const response = await fetcher(withBaseUrl(`/api/assets/${encodeURIComponent(assetId)}/risk`, baseUrl), {
@@ -307,7 +273,7 @@ export async function loadAssetRisk(assetId, options = {}) {
     const payload = await response.json();
     return normalizeAssetRisk(payload);
   } catch {
-    return fallback;
+    return null;
   }
 }
 

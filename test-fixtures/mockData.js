@@ -1,4 +1,4 @@
-// ── Mock data ────────────────────────────────────────────────────
+// Test fixture data.
 export const ASSETS = [
   { id:1, hostname:"api-gateway-prod-01", ip:"10.0.1.10",  type:"Load Balancer",   algo:"RSA-2048",    proto:"TLS 1.3", cls:"SHOR-CRITICAL", hndl:91, tnfl:72, risk:94, prio:"CRITICAL", segment:"DMZ",        pfs:false, cert_exp:"2026-09-14", migration:"ML-KEM-768 + ML-DSA-65", complexity:"MEDIUM" },
   { id:2, hostname:"vpn-concentrator-01", ip:"10.0.0.1",   type:"VPN Gateway",     algo:"ECDH-P256",   proto:"IKEv2",   cls:"SHOR-CRITICAL", hndl:96, tnfl:61, risk:97, prio:"CRITICAL", segment:"Perimeter",  pfs:true,  cert_exp:"2026-12-01", migration:"ML-KEM-1024",             complexity:"HIGH" },

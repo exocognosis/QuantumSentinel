@@ -1,4 +1,4 @@
-# QuantumSentinel v0.1.0-demo
+# QuantumSentinel v0.1.1-demo
 
 ## Release Type
 
@@ -20,6 +20,11 @@ It turns authorized scan evidence into:
 
 ## What This Release Proves
 
+- The public README includes the launch tagline, badges, quick start commands,
+  embedded demo video, GIF fallback, limitations, contributor labels, and
+  repository topics.
+- The repository includes an MIT license, GitHub CI workflow, shell installer,
+  and Windows PowerShell installer.
 - The app starts from source with `npm start`.
 - The dashboard and API run locally.
 - The default datastore is session-only.

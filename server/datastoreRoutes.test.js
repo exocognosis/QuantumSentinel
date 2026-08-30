@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -54,6 +54,40 @@ test("serves datastore-backed asset detail and history routes", async () => {
     assert.equal(missing.response.status, 404);
     assert.deepEqual(missing.body, { error: "Asset not found" });
   } finally {
+    await api.close();
+  }
+});
+
+test("repository scan route persists source evidence into dashboard data", async () => {
+  const api = await listen();
+  const repository = await mkdtemp(join(tmpdir(), "quantumsentinel-repository-route-"));
+
+  try {
+    await writeFile(join(repository, "crypto.js"), 'const signingAlgorithm = "ECDSA P-256";\nconst digest = "SHA-256";');
+    const response = await fetch(`${api.baseUrl}/api/repository-scans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: repository, actor: "route-test" }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 201);
+    assert.equal(body.data.report.scan.sourceType, "local");
+    assert.equal(body.data.report.scan.filesScanned, 1);
+    assert.equal(body.data.persistence.createdAssets, 1);
+    assert.equal(body.data.persistence.createdFindings, 1);
+
+    const assets = await getJson(api.baseUrl, "/api/assets");
+    assert.equal(assets.response.status, 200);
+    assert.ok(assets.body.data.some((asset) => asset.segment === `repository:${body.data.report.scan.targetName}`));
+
+    const scans = await getJson(api.baseUrl, "/api/probes");
+    assert.ok(scans.body.data.some((scan) => scan.mode === "repository" && scan.target.repository === body.data.report.scan.targetName));
+
+    const cbom = await getJson(api.baseUrl, "/api/cbom");
+    assert.ok(cbom.body.data.some((component) => component.assetType === "Repository cryptographic component"));
+  } finally {
+    await rm(repository, { recursive: true, force: true });
     await api.close();
   }
 });

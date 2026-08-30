@@ -4,9 +4,11 @@ import { test } from "node:test";
 import {
   buildRescanRequest,
   createProbeJob,
+  createRepositoryScan,
   getProbeJob,
   loadProbeJobs,
   normalizeProbeJob,
+  normalizeRepositoryScan,
 } from "./probeApi.js";
 
 test("buildRescanRequest reconstructs real TLS and discovery requests from older jobs", () => {
@@ -33,6 +35,18 @@ test("buildRescanRequest reconstructs real TLS and discovery requests from older
     ports: [443],
     concurrency: 4,
     timeoutMs: 2500,
+  });
+});
+
+test("buildRescanRequest reconstructs repository scan requests", () => {
+  assert.deepEqual(buildRescanRequest({
+    type: "repository",
+    target: { repository: "exocognosis/QuantumSentinel", url: "https://github.com/exocognosis/QuantumSentinel.git" },
+    targetLabel: "exocognosis/QuantumSentinel",
+    request: { target: "https://github.com/exocognosis/QuantumSentinel" },
+  }), {
+    mode: "repository",
+    path: "https://github.com/exocognosis/QuantumSentinel",
   });
 });
 
@@ -147,6 +161,72 @@ test("createProbeJob posts a JSON request and normalizes the created job", async
     request: {},
     result: null,
   });
+});
+
+test("createRepositoryScan posts a repository target and normalizes persisted scan output", async () => {
+  const calls = [];
+  const fetcher = async (url, options) => {
+    calls.push({ url, options });
+    return jsonResponse({
+      data: {
+        report: {
+          scan: {
+            sourceType: "github",
+            sourceInput: "https://github.com/exocognosis/QuantumSentinel",
+            target: "https://github.com/exocognosis/QuantumSentinel.git",
+            targetName: "exocognosis/QuantumSentinel",
+            startedAt: "2026-08-29T10:00:00.000Z",
+            completedAt: "2026-08-29T10:00:01.000Z",
+            filesScanned: 12,
+          },
+          score: { readinessScore: 62, grade: "C" },
+          summary: { totalFindings: 3 },
+          findings: [
+            { severity: "HIGH", title: "RSA requires migration" },
+            { severity: "INFO", title: "SHA-256 observed" },
+          ],
+        },
+        persistence: { snapshotId: "cbom-7" },
+      },
+    });
+  };
+
+  const scan = await createRepositoryScan({
+    path: "https://github.com/exocognosis/QuantumSentinel",
+    actor: "test",
+  }, { fetcher });
+
+  assert.equal(calls[0].url, "/api/repository-scans");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(scan.id, "cbom-7");
+  assert.equal(scan.type, "repository");
+  assert.equal(scan.targetLabel, "exocognosis/QuantumSentinel");
+  assert.equal(scan.status, "COMPLETED");
+  assert.equal(scan.findingsCount, 1);
+  assert.equal(scan.riskScore, 38);
+  assert.equal(scan.result.summary.filesScanned, 12);
+  assert.equal(scan.result.summary.actionableFindings, 1);
+});
+
+test("normalizeRepositoryScan provides a stable scan record", () => {
+  const scan = normalizeRepositoryScan({
+    report: {
+      scan: {
+        sourceType: "local",
+        target: "/tmp/repo",
+        targetName: "repo",
+        completedAt: "2026-08-29T10:00:00.000Z",
+        filesScanned: 1,
+      },
+      score: { readinessScore: 100 },
+      summary: {},
+      findings: [],
+    },
+  });
+
+  assert.equal(scan.type, "repository");
+  assert.equal(scan.targetLabel, "repo");
+  assert.equal(scan.result.classification.priority, "MONITOR");
 });
 
 test("createProbeJob surfaces API validation details", async () => {

@@ -11,6 +11,7 @@ import {
   Clock3,
   FileDown,
   FileText,
+  FolderGit2,
   Globe2,
   KeyRound,
   Laptop,
@@ -36,7 +37,7 @@ import {
   loadCbom,
   loadCbomSnapshots,
 } from "./api.js";
-import { buildRescanRequest, createProbeJob, loadProbeJobs } from "./probeApi.js";
+import { buildRescanRequest, createProbeJob, createRepositoryScan, loadProbeJobs } from "./probeApi.js";
 import { deriveQuantumScores } from "./quantumScores.js";
 import "./dashboard.css";
 import "./scan-options.css";
@@ -698,6 +699,7 @@ function scanTypeLabel(scan = {}) {
   if (scan.type === "tls") return "Website";
   if (scan.type === "device") return "This device";
   if (scan.type === "discovery") return "Authorized network";
+  if (scan.type === "repository") return "Repository";
   return "Imported evidence";
 }
 
@@ -743,6 +745,25 @@ function scanHostValues(scan = {}) {
     .flatMap(value => String(value).split(","))
     .map(value => value.trim().replace(/:\d+$/, ""))
     .filter(Boolean));
+}
+
+function repositoryScanLabel(scan = {}) {
+  return scan.target?.repository || scan.request?.repository || scan.targetLabel || scan.scan?.targetName || "";
+}
+
+function assetBelongsToRepositoryScan(asset = {}, scan = {}) {
+  if (scan.type !== "repository") return false;
+  const repository = repositoryScanLabel(scan);
+  if (!repository) return false;
+  return asset.segment === `repository:${repository}` || String(asset.hostname || asset.name || "").startsWith(`${repository}:`);
+}
+
+function scanContainsAsset(scan = {}, asset = {}) {
+  const assetName = asset.hostname || asset.name || String(asset.id || "");
+  if (scan.type === "repository") return assetBelongsToRepositoryScan(asset, scan);
+  const directHost = scan.target?.host ?? scan.request?.host;
+  const observations = scan.result?.observations || [];
+  return directHost === assetName || observations.some((observation) => observation.host === assetName);
 }
 
 function classifyObservationAsset(observation = {}) {
@@ -804,11 +825,18 @@ function scopedPlanContext(data = {}, scans = [], scores, selectedScope = "organ
     };
   }
   const hosts = scanHostValues(selectedScan);
-  const matchedAssets = assets.filter(asset => hosts.has(asset.hostname) || hosts.has(asset.name) || hosts.has(String(asset.ip || "")));
+  const matchedAssets = selectedScan.type === "repository"
+    ? assets.filter(asset => assetBelongsToRepositoryScan(asset, selectedScan))
+    : assets.filter(asset => hosts.has(asset.hostname) || hosts.has(asset.name) || hosts.has(String(asset.ip || "")));
   const scopedAssets = [...matchedAssets, ...observationAssetsForScan(selectedScan, matchedAssets)];
   const scopedIds = new Set(scopedAssets.map(asset => String(asset.id)));
   const scopedHosts = new Set(scopedAssets.map(asset => asset.hostname || asset.name).filter(Boolean));
-  const scopedFindings = findings.filter(finding => scopedIds.has(String(finding.assetId)) || scopedHosts.has(finding.assetName) || scopedHosts.has(finding.hostname) || scopedHosts.has(finding.host));
+  const scopedFindings = findings.filter(finding =>
+    scopedIds.has(String(finding.assetId)) ||
+    scopedHosts.has(finding.assetName) ||
+    scopedHosts.has(finding.hostname) ||
+    scopedHosts.has(finding.host) ||
+    (selectedScan.type === "repository" && finding.evidence?.repository === repositoryScanLabel(selectedScan)));
   const scopedAlerts = alerts.filter(alert => scopedIds.has(String(alert.assetId)) || scopedHosts.has(alert.assetName) || scopedHosts.has(alert.hostname) || scopedHosts.has(alert.host));
   const scopedScores = deriveObservedCryptoPosture(scopedAssets);
   const scopedData = {
@@ -1194,7 +1222,7 @@ function Overview({ data, scores, scans, setActive, profile, qdayScenario, setQd
               <option value="organization">Overall organization</option>
               {completedScans.map(scan => (
                 <option value={scan.id} key={scan.id}>
-                  {scan.type === "tls" ? "Website" : scan.type === "device" ? "This device" : "Authorized network"} · {scan.targetLabel}
+                  {scanTypeLabel(scan)} · {scan.targetLabel}
                 </option>
               ))}
             </select>
@@ -1359,15 +1387,19 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
   const [discoverActivePorts, setDiscoverActivePorts] = useState(true);
   const [networkPorts, setNetworkPorts] = useState("443, 8443");
   const [concurrency, setConcurrency] = useState(4);
+  const [repositoryMaxFiles, setRepositoryMaxFiles] = useState(25000);
+  const [repositoryMaxFileMb, setRepositoryMaxFileMb] = useState(2);
   useEffect(() => {
-    if (!["public", "device", "network"].includes(initialMode)) return;
+    if (!["public", "device", "network", "repository"].includes(initialMode)) return;
     setMode(initialMode);
     setTarget(
       initialMode === "public"
         ? ""
         : initialMode === "device"
           ? "Local machine"
-          : "10.0.0.1, 10.0.0.2",
+          : initialMode === "repository"
+            ? ""
+            : "10.0.0.1, 10.0.0.2",
     );
     setRunning(false);
     setCompleted(false);
@@ -1391,9 +1423,13 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
       ? "device"
       : requestOverride?.mode === "discovery"
         ? "network"
-        : mode;
+        : requestOverride?.mode === "repository"
+          ? "repository"
+          : mode;
     const scanTarget = requestOverride?.host
       ?? requestOverride?.hosts?.join(", ")
+      ?? requestOverride?.path
+      ?? requestOverride?.target
       ?? target;
     if (requestOverride) {
       setMode(scanMode);
@@ -1434,7 +1470,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
           discoverActivePorts,
           timeoutMs: boundedTimeout,
         };
-      else
+      else if (scanMode === "network")
         request = {
           mode: "discovery",
           hosts: target
@@ -1449,7 +1485,14 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
           concurrency: Math.max(1, Math.min(8, Number(concurrency) || 4)),
           timeoutMs: boundedTimeout,
         };
-      const job = await createProbeJob(request);
+      else
+        request = {
+          path: target.trim(),
+          maxFiles: Math.max(100, Math.min(100000, Number(repositoryMaxFiles) || 25000)),
+          maxFileBytes: Math.max(100000, Math.min(10 * 1024 * 1024, Number(repositoryMaxFileMb) * 1024 * 1024 || 2 * 1024 * 1024)),
+          actor: "QuantumSentinel UI",
+        };
+      const job = scanMode === "repository" ? await createRepositoryScan(request) : await createProbeJob(request);
       if (job.status === "FAILED" || !job.result) {
         const reason =
           job.error || "The target did not return usable TLS evidence.";
@@ -1484,7 +1527,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
       setLastResult({
         ...job.result,
         _riskScore: observedScore,
-          _targetLabel: job.targetLabel || scanTarget,
+        _targetLabel: job.targetLabel || scanTarget,
       });
       setScans((prev) => [
         {
@@ -1515,6 +1558,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
     ["public", Globe2, "Public website", "Start with one internet-facing TLS endpoint."],
     ["device", Laptop, "This device", "Check loopback TLS services on this machine."],
     ["network", Network, "Authorized network", "Test only approved hosts and ports."],
+    ["repository", FolderGit2, "Repository", "Scan a local path or GitHub repository."],
   ];
   const modeConfig = {
     public: {
@@ -1618,6 +1662,41 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
         ],
       ],
     },
+    repository: {
+      title: "Repository crypto scan",
+      subtitle:
+        "Scan source files in a local repository or GitHub repository.",
+      steps: [
+        "Resolve repository source",
+        "Scan source files",
+        "Classify cryptographic references",
+        "Save CBOM and findings",
+      ],
+      scope:
+        "Static source-code evidence from text files in the selected local repository or GitHub repository. It does not prove that a reference is reachable, deployed, configured, or used at runtime.",
+      observations: [
+        [
+          FolderGit2,
+          "Repository source",
+          "Reads a local repository path or clones a GitHub repository for a bounded local scan.",
+        ],
+        [
+          Search,
+          "Text source files",
+          "Scans recognized source, config, dependency, and documentation files.",
+        ],
+        [
+          KeyRound,
+          "Cryptographic references",
+          "Detects RSA, ECC, deprecated primitives, PQC names, and symmetric or hash primitives.",
+        ],
+        [
+          FileText,
+          "CBOM evidence",
+          "Creates repository components, findings, and a CBOM snapshot from observed source evidence.",
+        ],
+      ],
+    },
   };
   const currentMode = modeConfig[mode];
   const scanSteps = currentMode.steps;
@@ -1625,14 +1704,16 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
   const observedAlgorithm = lastResult?.certificate?.algorithm;
   const observedPfs = lastResult?.protocol?.perfectForwardSecrecy;
   const ModeIcon =
-    mode === "public" ? Globe2 : mode === "device" ? Laptop : Network;
-  const discoverySummary = lastResult?.summary;
+    mode === "public" ? Globe2 : mode === "device" ? Laptop : mode === "repository" ? FolderGit2 : Network;
+  const discoverySummary = mode === "repository" ? null : lastResult?.summary;
   const resultClassification = lastResult?.classification;
   const resultFindings = lastResult?.findings || [];
   const resultFindingSummaries = summarizeFindings(resultFindings);
   const scanFindingOverview = discoverySummary
     ? `${discoverySummary.completedCount ?? 0} services produced evidence and ${discoverySummary.failedCount ?? 0} targets were unreachable or did not return usable TLS evidence.`
-    : resultClassification
+    : mode === "repository" && lastResult?.summary
+      ? `${lastResult.summary.filesScanned ?? 0} files were scanned and ${lastResult.summary.actionableFindings ?? 0} actionable cryptographic finding${lastResult.summary.actionableFindings === 1 ? "" : "s"} were saved.`
+      : resultClassification
       ? `${resultClassification.label || "Observed"} cryptography was recorded for this endpoint.`
       : "Evidence was recorded within this scan boundary.";
   const completedSummary =
@@ -1650,6 +1731,8 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
           .join(" · ")
       : discoverySummary
         ? `${discoverySummary.completedCount} of ${discoverySummary.targetsScanned} targets returned service evidence · ${discoverySummary.failedCount} unreachable`
+        : mode === "repository" && lastResult?.summary
+          ? `${lastResult.summary.filesScanned ?? 0} files scanned · ${lastResult.summary.actionableFindings ?? 0} actionable findings · ${lastResult.score?.readinessScore ?? "not scored"}/100 readiness`
         : "Bounded service evidence recorded";
   const idleMeaning =
     mode === "public"
@@ -1662,6 +1745,11 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
             "This is a bounded loopback service check",
             "It tests two local names on one port. It does not inventory applications, cryptographic libraries, stored keys, files, or other device ports.",
           ]
+        : mode === "repository"
+          ? [
+              "This is a static source-code evidence scan",
+              "It scans files in a selected repository. It does not prove that a cryptographic reference is built, configured, reachable, or deployed.",
+            ]
         : [
             "This is a bounded host-and-port discovery",
             "It tests only the entered hosts on one port. It does not discover unknown devices, sweep networks, or inspect every service.",
@@ -1694,6 +1782,15 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
       contribution:
         "Broadens environment evidence within the approved target list; it is not a network-wide attestation.",
     },
+    repository: {
+      label: "Repository",
+      observed:
+        "Source, config, dependency, and documentation references to cryptographic algorithms in the selected repository.",
+      outside:
+        "Runtime negotiation, deployed configuration, binary artifacts, private dependency behavior, production keys, and external services.",
+      contribution:
+        "Adds source-code evidence to the CBOM and migration plan. Confirm usage before closing a finding.",
+    },
   }[mode];
   const selectMode = (id) => {
     setMode(id);
@@ -1702,7 +1799,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
         ? ""
         : id === "device"
           ? "Local machine"
-          : "10.0.0.1, 10.0.0.2",
+          : id === "repository"
+            ? ""
+            : "10.0.0.1, 10.0.0.2",
     );
     setRunning(false);
     setCompleted(false);
@@ -1737,7 +1836,11 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
             <input
               value={target}
               placeholder={
-                mode === "public" ? "For example www.google.com" : ""
+                mode === "public"
+                  ? "For example www.google.com"
+                  : mode === "repository"
+                    ? "Local path or GitHub URL, for example /Users/me/app or https://github.com/org/repo"
+                    : ""
               }
               onChange={(e) => setTarget(e.target.value)}
               disabled={mode === "device"}
@@ -1843,7 +1946,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                     <small>Local services should respond quickly.</small>
                   </label>
                 </>
-              ) : (
+              ) : mode === "network" ? (
                 <>
                   <label>
                     <span>Authorized service ports</span>
@@ -1894,6 +1997,35 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                     <small>Bounds network load; maximum 8.</small>
                   </label>
                 </>
+              ) : (
+                <>
+                  <label>
+                    <span>Maximum files</span>
+                    <input
+                      aria-label="Maximum repository files"
+                      type="number"
+                      min="100"
+                      max="100000"
+                      value={repositoryMaxFiles}
+                      onChange={(e) => setRepositoryMaxFiles(e.target.value)}
+                    />
+                    <small>Bounds the static scan.</small>
+                  </label>
+                  <label>
+                    <span>Maximum file size</span>
+                    <select
+                      aria-label="Maximum repository file size"
+                      value={repositoryMaxFileMb}
+                      onChange={(e) => setRepositoryMaxFileMb(e.target.value)}
+                    >
+                      <option value="1">1 MB</option>
+                      <option value="2">2 MB</option>
+                      <option value="5">5 MB</option>
+                      <option value="10">10 MB</option>
+                    </select>
+                    <small>Oversized files are skipped.</small>
+                  </label>
+                </>
               )}
               <div className="advanced-note">
                 <ShieldCheck />
@@ -1903,7 +2035,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                       ? "External endpoint evidence"
                       : mode === "device"
                         ? "Local runtime and loopback evidence"
-                        : "Bounded authorized network evidence"}{" "}
+                        : mode === "repository"
+                          ? "Repository source evidence"
+                          : "Bounded authorized network evidence"}{" "}
                     is saved automatically.
                   </b>
                   <small>
@@ -2001,7 +2135,7 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
             <span>
               {failed ? <ShieldAlert /> : <Clock3 />}
               {running
-                ? "Probe in progress"
+                ? "Scan in progress"
                 : failed
                   ? resultNote || "No evidence collected"
                   : completed
@@ -2055,6 +2189,13 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                   </dl>
                 </div>
               </>
+            ) : mode === "repository" ? (
+              <div className="analysis-evidence-grid">
+                <div><small>Files scanned</small><strong>{lastResult.summary?.filesScanned ?? "Recorded"}</strong></div>
+                <div><small>Total findings</small><strong>{lastResult.summary?.totalFindings ?? "Recorded"}</strong></div>
+                <div><small>Actionable findings</small><strong>{lastResult.summary?.actionableFindings ?? "Recorded"}</strong></div>
+                <div><small>Readiness</small><strong>{lastResult.score?.readinessScore ?? "Not scored"}/100</strong></div>
+              </div>
             ) : (
               <div className="analysis-evidence-grid">
                 <div><small>Targets tested</small><strong>{discoverySummary?.targetsScanned ?? "Recorded"}</strong></div>
@@ -2176,7 +2317,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                     ? "One public endpoint observed—not the organization"
                     : mode === "device"
                       ? "Local service evidence collected—not a device inventory"
-                      : "Authorized host evidence collected—not a network inventory"
+                      : mode === "repository"
+                        ? "Repository evidence collected—not runtime proof"
+                        : "Authorized host evidence collected—not a network inventory"
                   : idleMeaning[0]}
             </h3>
             {completed ? (
@@ -2187,7 +2330,9 @@ function Scan({ scans, setScans, setActive, onEvidenceSaved, openResultsForScope
                   ? "This describes only the endpoint scanned. Add authorized internal observations and your organization profile before treating it as a readiness signal."
                   : mode === "device"
                     ? "This describes only loopback services on the selected port. A device cryptographic inventory requires separate filesystem, package, key, and application collectors."
-                    : "This describes only the entered hosts and selected port. Broader readiness requires approved asset inventory, additional services, and governance evidence."}
+                    : mode === "repository"
+                      ? "This describes only static repository evidence. Confirm runtime use, deployment state, and owner context before closing migration risk."
+                      : "This describes only the entered hosts and selected port. Broader readiness requires approved asset inventory, additional services, and governance evidence."}
               </p>
             ) : failed ? (
               <p>
@@ -2233,7 +2378,7 @@ function RecentScans({ scans, onRescan }) {
         rows.map((scan) => (
           <div className="recent-row" key={scan.id}>
             <span className="metric-icon blue">
-              {scan.type === "local" ? <Laptop /> : <Globe2 />}
+              {scan.type === "device" ? <Laptop /> : scan.type === "repository" ? <FolderGit2 /> : scan.type === "discovery" ? <Network /> : <Globe2 />}
             </span>
             <div>
               <b>{scan.targetLabel}</b>
@@ -2918,14 +3063,16 @@ function scanEvidenceSummary(scans = []) {
   const completed = scans.filter(scan => scan.status === "COMPLETED");
   if (!completed.length) return "No completed scans are saved.";
   return completed.slice(0, 4).map(scan => {
-    const type = scan.type === "tls" ? "Website" : scan.type === "device" ? "This device" : "Authorized network";
+    const type = scanTypeLabel(scan);
     return `${type}: ${scan.targetLabel || scan.target?.host || scan.id}`;
   }).join("; ");
 }
 
 function summarizeFindings(messages = []) {
   return Object.entries(messages.reduce((acc, message) => {
-    const normalized = String(message || "").trim();
+    const normalized = typeof message === "string"
+      ? message.trim()
+      : String(message?.title || message?.rationale || message?.recommendation || message?.algorithm || "").trim();
     if (!normalized) return acc;
     acc[normalized] = (acc[normalized] || 0) + 1;
     return acc;
@@ -3646,11 +3793,7 @@ function PlanWorkspace({ data, scans, scores, profile, qdayScenario, selectedSco
     .filter((asset) => !["HYBRID", "QUANTUM-SAFE"].includes(asset.cls))
     .map((asset) => {
       const assetName = asset.hostname || asset.name || String(asset.id);
-      const sourceScan = planContext.scans.find((scan) => {
-        const directHost = scan.target?.host ?? scan.request?.host;
-        const observations = scan.result?.observations || [];
-        return directHost === assetName || observations.some((observation) => observation.host === assetName);
-      });
+      const sourceScan = planContext.scans.find((scan) => scanContainsAsset(scan, asset));
       const scanType = sourceScan ? scanTypeLabel(sourceScan) : "Imported evidence";
       return {
         id: `evidence-${asset.id}`,

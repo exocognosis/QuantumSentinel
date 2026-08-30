@@ -12,6 +12,8 @@ import {
   updateMonitorPolicy,
 } from "./probeScheduler.js";
 import { buildReport, listReportTypes } from "./reporting.js";
+import { persistRepositoryScan } from "./repositoryScanPersistence.js";
+import { runRepositoryScan } from "./repositoryScanRunner.js";
 import { analyzeAsset, detectAssetDrift, findingsFromAnalysis } from "./riskEngine.js";
 
 const JSON_HEADERS = {
@@ -765,6 +767,49 @@ export function createApiServer({ datastore = null, scheduler = null, schedulerO
         const job = await createProbeJob(payload);
         await persistProbeResult(datastore, job);
         sendJson(response, 201, { data: job });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/repository-scans") {
+        if (!datastore) {
+          sendJson(response, 501, { error: "Datastore is not configured" });
+          return;
+        }
+
+        const payload = await readJsonBody(request);
+        const source = payload.path ?? payload.url ?? payload.repository ?? payload.target;
+        const report = await runRepositoryScan(source, {
+          maxFiles: payload.maxFiles,
+          maxFileBytes: payload.maxFileBytes,
+          cloneTimeoutMs: payload.cloneTimeoutMs,
+        });
+        const result = await persistRepositoryScan(datastore, report, {
+          actor: getRequestActor(request, payload),
+        });
+        await datastore.createProbeJob({
+          id: result.persistence.snapshotId,
+          mode: "repository",
+          status: "completed",
+          createdAt: report.scan.startedAt,
+          updatedAt: report.scan.completedAt,
+          completedAt: report.scan.completedAt,
+          target: {
+            name: report.scan.targetName,
+            repository: report.scan.targetName,
+            sourceType: report.scan.sourceType,
+            path: report.scan.sourceType === "local" ? report.scan.target : undefined,
+            url: report.scan.sourceType === "github" ? report.scan.target : undefined,
+          },
+          request: {
+            mode: "repository",
+            target: report.scan.sourceInput ?? report.scan.target,
+            repository: report.scan.targetName,
+          },
+          result: report,
+          riskScore: Math.max(0, 100 - Number(report.score?.readinessScore ?? 100)),
+          error: null,
+        });
+        sendJson(response, 201, { data: result });
         return;
       }
 

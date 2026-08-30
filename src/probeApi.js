@@ -1,4 +1,5 @@
 const PROBES_ENDPOINT = "/api/probes";
+const REPOSITORY_SCANS_ENDPOINT = "/api/repository-scans";
 
 export const unavailableProbeJobs = [];
 
@@ -120,6 +121,17 @@ function targetLabel(value) {
   return String(value);
 }
 
+function getRepositoryScanPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Expected repository scan payload to be an object");
+  }
+
+  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+    ? payload.data
+    : payload;
+  return data.report ? data : { report: data, persistence: null };
+}
+
 export function normalizeProbeJob(job, index = 0) {
   const request = job.request && typeof job.request === "object" && !Array.isArray(job.request) ? job.request : {};
   const result = job.result ?? job.results ?? null;
@@ -193,6 +205,15 @@ export function buildRescanRequest(scan) {
     };
   }
 
+  if (type === "repository") {
+    const target = saved.target ?? saved.repository ?? scan?.target?.url ?? scan?.target?.path;
+    if (!target) return null;
+    return {
+      mode: "repository",
+      path: target,
+    };
+  }
+
   return null;
 }
 
@@ -236,6 +257,77 @@ export async function createProbeJob(request, options = {}) {
   return normalizeProbeJob(getJobPayload(payload));
 }
 
+export function normalizeRepositoryScan(result, index = 0) {
+  const report = result?.report ?? result;
+  const scan = report?.scan ?? {};
+  const sourceType = scan.sourceType ?? "local";
+  const targetLabel = scan.targetName || scan.sourceInput || scan.target || `repository-${index + 1}`;
+  const findings = Array.isArray(report?.findings) ? report.findings : [];
+  const actionableFindings = findings.filter((finding) => finding.severity !== "INFO");
+  return {
+    id: String(result?.persistence?.snapshotId ?? `repository-${Date.now()}-${index + 1}`),
+    name: "Repository Scan",
+    type: "repository",
+    target: {
+      repository: targetLabel,
+      sourceType,
+      path: sourceType === "local" ? scan.target : undefined,
+      url: sourceType === "github" ? scan.target : undefined,
+    },
+    targetLabel,
+    status: "COMPLETED",
+    progress: 100,
+    createdAt: scan.startedAt ?? null,
+    updatedAt: scan.completedAt ?? null,
+    completedAt: scan.completedAt ?? new Date().toISOString(),
+    findingsCount: actionableFindings.length,
+    riskScore: Math.max(0, 100 - toNumber(report?.score?.readinessScore, 100)),
+    error: "",
+    request: {
+      mode: "repository",
+      sourceType,
+      target: scan.sourceInput ?? scan.target,
+      repository: targetLabel,
+    },
+    result: {
+      ...report,
+      source: "repository",
+      classification: {
+        label: `${report?.score?.readinessScore ?? 0}/100 repository readiness`,
+        priority: actionableFindings.length ? "HIGH" : "MONITOR",
+        quantumVulnerable: actionableFindings.length > 0,
+      },
+      summary: {
+        ...(report?.summary ?? {}),
+        filesScanned: scan.filesScanned ?? 0,
+        totalFindings: report?.summary?.totalFindings ?? findings.length,
+        actionableFindings: actionableFindings.length,
+      },
+    },
+  };
+}
+
+export async function createRepositoryScan(request, options = {}) {
+  const fetcher = options.fetcher ?? globalThis.fetch;
+  const baseUrl = options.baseUrl ?? "";
+
+  if (typeof fetcher !== "function") {
+    throw new Error("Repository scan API is unavailable");
+  }
+
+  const payload = await fetchJson(fetcher, REPOSITORY_SCANS_ENDPOINT, {
+    baseUrl,
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  return normalizeRepositoryScan(getRepositoryScanPayload(payload));
+}
+
 export async function getProbeJob(id, options = {}) {
   const fetcher = options.fetcher ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? "";
@@ -255,6 +347,7 @@ export async function getProbeJob(id, options = {}) {
 export default {
   loadProbeJobs,
   createProbeJob,
+  createRepositoryScan,
   getProbeJob,
   buildRescanRequest,
   unavailableProbeJobs,

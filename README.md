@@ -63,6 +63,9 @@ Supported evidence sources:
 
 ## Scan A Repository
 
+Use the Scan tab to scan a local repository path or a GitHub repository URL.
+QuantumSentinel clones GitHub repositories into a temporary local directory, scans the checkout, saves evidence, and removes the temporary directory.
+
 ```sh
 npm run scan -- /path/to/repository
 npm run scan -- /path/to/repository --output quantum-readiness.json

@@ -126,12 +126,10 @@ function findingFromJob(domain, job) {
   };
 }
 
-function scoreGrade(score) {
-  if (score >= 90) return "A";
-  if (score >= 75) return "B";
-  if (score >= 60) return "C";
-  if (score >= 40) return "D";
-  return "F";
+function readinessRating(score) {
+  if (score >= 80) return "Quantum-ready";
+  if (score >= 50) return "Transition underway";
+  return "Migration required";
 }
 
 function factor(id, label, score, maxScore, status, observation, meaning) {
@@ -209,7 +207,7 @@ function serviceReadiness(job, now) {
   return {
     endpoint: `${job.target.host}:${job.target.port}`,
     readinessScore,
-    grade: scoreGrade(readinessScore),
+    rating: readinessRating(readinessScore),
     breakdown,
   };
 }
@@ -221,7 +219,7 @@ export function calculateWebsiteReadinessScore(jobs, { now = Date.now() } = {}) 
   if (!assessedServices.length) {
     return {
       readinessScore: 0,
-      grade: "N/A",
+      rating: "Not assessed",
       assessmentStatus: "unassessed",
       assessedEndpoint: null,
       breakdown: [],
@@ -231,11 +229,11 @@ export function calculateWebsiteReadinessScore(jobs, { now = Date.now() } = {}) 
   const lowest = assessedServices.toSorted((left, right) => left.readinessScore - right.readinessScore)[0];
   return {
     readinessScore: lowest.readinessScore,
-    grade: lowest.grade,
+    rating: lowest.rating,
     assessmentStatus: "assessed",
     assessedEndpoint: lowest.endpoint,
     breakdown: lowest.breakdown,
-    serviceScores: assessedServices.map(({ endpoint, readinessScore, grade }) => ({ endpoint, readinessScore, grade })),
+    serviceScores: assessedServices.map(({ endpoint, readinessScore, rating }) => ({ endpoint, readinessScore, rating })),
     method: "100 weighted points: website identity 30, connection key exchange 30, connection protocol 15, forward secrecy 10, data encryption 10, and certificate status 5. Multiple services use the lowest observed score.",
   };
 }

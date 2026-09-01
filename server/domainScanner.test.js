@@ -42,7 +42,7 @@ test("domain scan produces DNS, service, evidence, and score output", async () =
   assert.equal(report.summary.servicesFailed, 1);
   assert.equal(report.findings[0].classification, "shor-vulnerable-public-key");
   assert.equal(report.score.readinessScore, 40);
-  assert.equal(report.score.grade, "D");
+  assert.equal(report.score.rating, "Migration required");
   assert.equal(report.score.breakdown.length, 6);
   assert.deepEqual(report.score.breakdown.map((item) => item.score), [0, 0, 15, 10, 10, 5]);
   assert.match(report.interpretation.internalInference, /do not establish/);
@@ -73,7 +73,7 @@ test("website readiness score differentiates transport and certificate evidence"
 test("website readiness score reports unassessed when no service completes", () => {
   const score = calculateWebsiteReadinessScore([{ status: "failed", target: { host: "offline.example", port: 443 }, error: "timeout" }]);
   assert.equal(score.readinessScore, 0);
-  assert.equal(score.grade, "N/A");
+  assert.equal(score.rating, "Not assessed");
   assert.equal(score.assessmentStatus, "unassessed");
   assert.deepEqual(score.breakdown, []);
 });

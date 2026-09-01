@@ -10,11 +10,13 @@ services:
       PORT: 8787
       QS_ALLOWED_ORIGIN: https://dytallix.com
       QS_PUBLIC_SCAN_LIMIT_PER_MINUTE: 5
+      QS_PUBLIC_REPOSITORY_SCAN_LIMIT_PER_MINUTE: 2
+      QS_PUBLIC_REPOSITORY_SCAN_CONCURRENCY: 1
     ports:
       - "127.0.0.1:8790:8787"
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,size=128m,uid=1000,gid=1000
     cap_drop:
       - ALL
     security_opt:

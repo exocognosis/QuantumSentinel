@@ -6,6 +6,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node server ./server
 

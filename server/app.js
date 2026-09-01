@@ -14,7 +14,7 @@ import {
 import { buildReport, listReportTypes } from "./reporting.js";
 import { scanDomain } from "./domainScanner.js";
 import { persistRepositoryScan } from "./repositoryScanPersistence.js";
-import { runRepositoryScan } from "./repositoryScanRunner.js";
+import { normalizePublicGitHubRepositorySource, runRepositoryScan } from "./repositoryScanRunner.js";
 import { analyzeAsset, detectAssetDrift, findingsFromAnalysis } from "./riskEngine.js";
 
 const ALLOWED_ORIGIN = String(process.env.QS_ALLOWED_ORIGIN ?? "*").trim() || "*";
@@ -780,6 +780,9 @@ export function createApiServer({
   schedulerOptions = {},
   publicDomainScanner = scanDomain,
   publicScanLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_SCAN_LIMIT_PER_MINUTE ?? "5", 10),
+  publicRepositoryScanner = runRepositoryScan,
+  publicRepositoryScanLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_REPOSITORY_SCAN_LIMIT_PER_MINUTE ?? "2", 10),
+  publicRepositoryScanConcurrency = Number.parseInt(process.env.QS_PUBLIC_REPOSITORY_SCAN_CONCURRENCY ?? "1", 10),
 } = {}) {
   const schedulerRuntime = scheduler ?? createMonitorScheduler({
     datastore,
@@ -790,6 +793,14 @@ export function createApiServer({
     limit: Number.isInteger(publicScanLimitPerMinute) && publicScanLimitPerMinute > 0 ? publicScanLimitPerMinute : 5,
     windowMs: 60_000,
   });
+  const allowPublicRepositoryScan = createRateLimiter({
+    limit: Number.isInteger(publicRepositoryScanLimitPerMinute) && publicRepositoryScanLimitPerMinute > 0 ? publicRepositoryScanLimitPerMinute : 2,
+    windowMs: 60_000,
+  });
+  const publicRepositoryConcurrency = Number.isInteger(publicRepositoryScanConcurrency) && publicRepositoryScanConcurrency > 0
+    ? publicRepositoryScanConcurrency
+    : 1;
+  let publicRepositoryScansInFlight = 0;
 
   const server = http.createServer(async (request, response) => {
     if (request.method === "OPTIONS") {
@@ -817,6 +828,39 @@ export function createApiServer({
           timeoutMs: 5_000,
         });
         sendJson(response, 200, { data: report });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/public/repository-scans") {
+        const payload = await readJsonBody(request);
+        if (payload.authorized !== true) {
+          sendJson(response, 400, { error: "authorized must be true before a public repository scan can run" });
+          return;
+        }
+        const source = normalizePublicGitHubRepositorySource(payload.repository ?? payload.url);
+        if (!allowPublicRepositoryScan(publicClientId(request))) {
+          sendJson(response, 429, { error: "Public repository scan rate limit exceeded. Try again later." });
+          return;
+        }
+        if (publicRepositoryScansInFlight >= publicRepositoryConcurrency) {
+          sendJson(response, 503, { error: "The public repository scanner is busy. Try again shortly." });
+          return;
+        }
+
+        publicRepositoryScansInFlight += 1;
+        try {
+          const report = await publicRepositoryScanner(source.cloneUrl, {
+            maxFiles: 1_000,
+            maxFileBytes: 512 * 1024,
+            maxTotalBytes: 10 * 1024 * 1024,
+            maxFindings: 500,
+            maxCheckoutBytes: 64 * 1024 * 1024,
+            cloneTimeoutMs: 30_000,
+          });
+          sendJson(response, 200, { data: report });
+        } finally {
+          publicRepositoryScansInFlight -= 1;
+        }
         return;
       }
 

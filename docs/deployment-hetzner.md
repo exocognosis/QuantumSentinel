@@ -1,7 +1,7 @@
-# Hetzner public-domain scanner deployment
+# Hetzner public scanner deployment
 
-This deployment exposes only the public domain-scan route through Nginx. The
-container binds its host port to `127.0.0.1`.
+This deployment exposes the restricted public domain and GitHub repository scan
+routes through Nginx. The container binds its host port to `127.0.0.1`.
 
 ## Service
 
@@ -33,6 +33,15 @@ location = /api/quantumsentinel/public/domain-scans {
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location = /api/quantumsentinel/public/repository-scans {
+    proxy_pass http://127.0.0.1:8790/api/public/repository-scans;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 45s;
 }
 ```
 

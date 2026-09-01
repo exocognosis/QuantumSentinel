@@ -55,6 +55,88 @@ test("runs only authorized and rate-limited public domain scans", async () => {
   }
 });
 
+test("runs only authorized, GitHub-only, rate-limited public repository scans", async () => {
+  const requests = [];
+  const api = await listen({
+    publicRepositoryScanLimitPerMinute: 1,
+    publicRepositoryScanner: async (repository, options) => {
+      requests.push({ repository, options });
+      return { scan: { targetName: "owner/repository" }, score: { readinessScore: 100 }, findings: [] };
+    },
+  });
+
+  try {
+    const denied = await fetch(`${api.baseUrl}/api/public/repository-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository: "https://github.com/owner/repository" }),
+    });
+    assert.equal(denied.status, 400);
+
+    const invalid = await fetch(`${api.baseUrl}/api/public/repository-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository: "/etc", authorized: true }),
+    });
+    assert.equal(invalid.status, 400);
+
+    const accepted = await fetch(`${api.baseUrl}/api/public/repository-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository: "https://github.com/owner/repository", authorized: true }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].repository, "https://github.com/owner/repository.git");
+    assert.deepEqual(requests[0].options, {
+      maxFiles: 1_000,
+      maxFileBytes: 512 * 1024,
+      maxTotalBytes: 10 * 1024 * 1024,
+      maxFindings: 500,
+      maxCheckoutBytes: 64 * 1024 * 1024,
+      cloneTimeoutMs: 30_000,
+    });
+
+    const limited = await fetch(`${api.baseUrl}/api/public/repository-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository: "https://github.com/owner/second", authorized: true }),
+    });
+    assert.equal(limited.status, 429);
+  } finally {
+    await api.close();
+  }
+});
+
+test("limits concurrent public repository scans", async () => {
+  let releaseScan;
+  const blockedScan = new Promise((resolve) => { releaseScan = resolve; });
+  const api = await listen({
+    publicRepositoryScanLimitPerMinute: 5,
+    publicRepositoryScanConcurrency: 1,
+    publicRepositoryScanner: async () => blockedScan,
+  });
+
+  try {
+    const first = fetch(`${api.baseUrl}/api/public/repository-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository: "https://github.com/owner/first", authorized: true }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const second = await fetch(`${api.baseUrl}/api/public/repository-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repository: "https://github.com/owner/second", authorized: true }),
+    });
+    assert.equal(second.status, 503);
+    releaseScan({ scan: {}, score: {}, findings: [] });
+    assert.equal((await first).status, 200);
+  } finally {
+    await api.close();
+  }
+});
+
 const getJson = async (baseUrl, path) => {
   const response = await fetch(`${baseUrl}${path}`);
   const body = await response.json();

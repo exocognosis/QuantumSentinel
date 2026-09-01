@@ -33,3 +33,20 @@ test("repository scanner excludes generated and dependency directories", async (
     assert.equal(result.scan.skipped.excludedDirectories, 1);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("repository scanner enforces total-byte and finding limits", async () => {
+  const root = await mkdtemp(join(tmpdir(), "quantumsentinel-scan-"));
+  try {
+    await writeFile(join(root, "a.js"), 'const first = "RSA-2048";\nconst second = "ECDSA P-256";');
+    await writeFile(join(root, "b.js"), 'const third = "MD5";');
+
+    const bytesLimited = await scanRepository(root, { maxTotalBytes: 50, maxFindings: 10 });
+    assert.equal(bytesLimited.scan.limitReached, true);
+    assert.ok(bytesLimited.scan.skipped.totalByteBudgetFiles > 0);
+
+    const findingsLimited = await scanRepository(root, { maxTotalBytes: 1_000, maxFindings: 1 });
+    assert.equal(findingsLimited.findings.length, 1);
+    assert.equal(findingsLimited.scan.findingLimitReached, true);
+    assert.equal(findingsLimited.scan.limitReached, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

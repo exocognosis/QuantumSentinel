@@ -139,6 +139,9 @@ They do not discover unknown devices or scan a full network.
 
 Repository scans classify static source evidence.
 They do not execute code or prove runtime cryptographic behavior.
+The hosted scanner accepts exact public GitHub repository URLs only.
+It uses bounded clone, checkout, file, byte, finding, rate, and concurrency limits.
+It deletes each temporary checkout after the scan.
 
 The Q-Day Readiness Score is a prioritization aid.
 It is not proof that an organization is quantum safe.

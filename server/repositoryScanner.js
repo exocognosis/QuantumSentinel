@@ -4,6 +4,8 @@ import { basename, extname, join, relative, resolve } from "node:path";
 
 const DEFAULT_MAX_FILES = 25_000;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 250 * 1024 * 1024;
+const DEFAULT_MAX_FINDINGS = 10_000;
 const EXCLUDED_DIRECTORIES = new Set([
   ".git", ".hg", ".svn", ".quantumsentinel", "node_modules", "target", "dist", "build",
   "coverage", ".next", ".nuxt", "vendor", "Pods", ".venv", "venv", "__pycache__",
@@ -55,9 +57,10 @@ function contextFor(path, line) {
   if (/lock|depend|package|cargo|pom|gradle|requirements/.test(text)) return "dependency";
   return "usage-unverified";
 }
-async function collectFiles(root, { maxFiles, maxFileBytes }) {
+async function collectFiles(root, { maxFiles, maxFileBytes, maxTotalBytes }) {
   const files = [];
-  const skipped = { excludedDirectories: 0, oversizedFiles: 0, nonTextFiles: 0, unreadableFiles: 0 };
+  let selectedBytes = 0;
+  const skipped = { excludedDirectories: 0, oversizedFiles: 0, totalByteBudgetFiles: 0, nonTextFiles: 0, unreadableFiles: 0 };
   async function visit(directory) {
     if (files.length >= maxFiles) return;
     let entries;
@@ -76,12 +79,16 @@ async function collectFiles(root, { maxFiles, maxFileBytes }) {
       try {
         const metadata = await stat(path);
         if (metadata.size > maxFileBytes) skipped.oversizedFiles += 1;
-        else files.push({ path, bytes: metadata.size });
+        else if (selectedBytes + metadata.size > maxTotalBytes) skipped.totalByteBudgetFiles += 1;
+        else {
+          files.push({ path, bytes: metadata.size });
+          selectedBytes += metadata.size;
+        }
       } catch { skipped.unreadableFiles += 1; }
     }
   }
   await visit(root);
-  return { files, skipped, limitReached: files.length >= maxFiles };
+  return { files, skipped, limitReached: files.length >= maxFiles || skipped.totalByteBudgetFiles > 0 };
 }
 export function calculateReadinessScore(findings) {
   const penaltyBySeverity = { CRITICAL: 30, HIGH: 20, MEDIUM: 8, LOW: 3, INFO: 0 };
@@ -114,9 +121,16 @@ export async function scanRepository(inputPath, options = {}) {
   const rootMetadata = await stat(root);
   if (!rootMetadata.isDirectory()) throw new Error("scan target must be a directory");
   const startedAt = new Date().toISOString();
-  const inventory = await collectFiles(root, { maxFiles: options.maxFiles ?? DEFAULT_MAX_FILES, maxFileBytes: options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES });
+  const inventory = await collectFiles(root, {
+    maxFiles: options.maxFiles ?? DEFAULT_MAX_FILES,
+    maxFileBytes: options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES,
+    maxTotalBytes: options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES,
+  });
   const findings = [];
+  const maxFindings = options.maxFindings ?? DEFAULT_MAX_FINDINGS;
+  let findingLimitReached = false;
   let bytesScanned = 0;
+  scanFiles:
   for (const file of inventory.files) {
     let content;
     try { content = await readFile(file.path, "utf8"); } catch { inventory.skipped.unreadableFiles += 1; continue; }
@@ -127,6 +141,10 @@ export async function scanRepository(inputPath, options = {}) {
         rule.pattern.lastIndex = 0;
         const matches = [...line.matchAll(rule.pattern)];
         if (!matches.length) continue;
+        if (findings.length >= maxFindings) {
+          findingLimitReached = true;
+          break scanFiles;
+        }
         const confidence = confidenceFor(relativePath, line);
         findings.push({
           id: createHash("sha256").update(`${relativePath}:${index + 1}:${rule.id}:${matches[0][0]}`).digest("hex").slice(0, 16),
@@ -142,7 +160,7 @@ export async function scanRepository(inputPath, options = {}) {
   const completedAt = new Date().toISOString();
   return {
     schemaVersion: "1.0.0", scanner: { name: "QuantumSentinel Q-Day Scanner", version: "0.1.0" },
-    scan: { target: root, targetName: basename(root), startedAt, completedAt, filesScanned: inventory.files.length, bytesScanned, limitReached: inventory.limitReached, skipped: inventory.skipped, exclusions: [...EXCLUDED_DIRECTORIES].sort() },
+    scan: { target: root, targetName: basename(root), startedAt, completedAt, filesScanned: inventory.files.length, bytesScanned, limitReached: inventory.limitReached || findingLimitReached, findingLimitReached, skipped: inventory.skipped, exclusions: [...EXCLUDED_DIRECTORIES].sort() },
     score: calculateReadinessScore(findings), summary: summarize(findings), findings,
     limitations: [
       "Static textual detection does not prove that every referenced algorithm is reachable or operationally deployed.",

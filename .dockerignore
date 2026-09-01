@@ -1,0 +1,13 @@
+.git
+.github
+.quantumsentinel
+dist
+docs
+node_modules
+src
+test-fixtures
+*.log
+*.png
+*.mp4
+*.gif
+README 2.md

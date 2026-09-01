@@ -234,7 +234,7 @@ function isExpired(validTo) {
   return Number.isFinite(timestamp) && timestamp < Date.now();
 }
 
-function tlsResult({ host, port, timeoutMs }) {
+function tlsResult({ host, port, timeoutMs, connectHost = host, servername }) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const settle = (fn, value) => {
@@ -244,12 +244,16 @@ function tlsResult({ host, port, timeoutMs }) {
     };
 
     const options = {
-      host,
+      host: connectHost,
       port,
       rejectUnauthorized: false,
       timeout: timeoutMs,
     };
-    if (!net.isIP(host)) options.servername = host;
+    if (servername) {
+      options.servername = servername;
+    } else if (!net.isIP(host)) {
+      options.servername = host;
+    }
 
     const socket = tls.connect(options);
     socket.setTimeout(timeoutMs);
@@ -539,7 +543,7 @@ export function getProbeJob(id) {
   return job ? clone(job) : null;
 }
 
-export async function createProbeJob(input) {
+export async function createProbeJob(input, options = {}) {
   const request = validateProbeInput(input);
   const job = makeJob(request);
   job.request = {
@@ -554,7 +558,11 @@ export async function createProbeJob(input) {
         ? await discoveryResult(request)
         : request.mode === "device"
           ? await deviceResult(request)
-        : await tlsResult(request);
+        : await tlsResult({
+            ...request,
+            connectHost: options.connectHost,
+            servername: options.servername,
+          });
     finishJob(job, result);
   } catch (error) {
     failJob(job, error);

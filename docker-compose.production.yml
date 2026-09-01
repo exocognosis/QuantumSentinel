@@ -1,0 +1,23 @@
+services:
+  quantumsentinel-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: quantumsentinel-api
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      QS_ALLOWED_ORIGIN: https://dytallix.com
+      QS_PUBLIC_SCAN_LIMIT_PER_MINUTE: 5
+    ports:
+      - "127.0.0.1:8790:8787"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0

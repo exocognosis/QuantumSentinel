@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeDomainScanInput, scanDomain } from "./domainScanner.js";
+import { isPublicAddress, normalizeDomainScanInput, scanDomain } from "./domainScanner.js";
 
 test("domain scan validates bounded TLS targets", () => {
   assert.deepEqual(normalizeDomainScanInput("Example.COM", [443, 443, 993]), { hostname: "example.com", ports: [443, 993] });
@@ -9,10 +9,25 @@ test("domain scan validates bounded TLS targets", () => {
   assert.throws(() => normalizeDomainScanInput("example.com", [22]), /allowlist/);
 });
 
+test("domain scan rejects private and reserved network addresses", async () => {
+  assert.equal(isPublicAddress("93.184.216.34"), true);
+  assert.equal(isPublicAddress("127.0.0.1"), false);
+  assert.equal(isPublicAddress("10.0.0.1"), false);
+  assert.equal(isPublicAddress("2001:db8::1"), false);
+
+  await assert.rejects(
+    scanDomain("internal.example", {
+      resolver: { resolve4: async () => ["127.0.0.1"], resolve6: async () => [] },
+      probe: async () => assert.fail("private target must not be probed"),
+    }),
+    /private, reserved, or non-routable/,
+  );
+});
+
 test("domain scan produces DNS, service, evidence, and score output", async () => {
   const report = await scanDomain("example.com", {
     ports: [443, 993],
-    resolver: { resolve4: async () => ["192.0.2.10"], resolve6: async () => ["2001:db8::10"] },
+    resolver: { resolve4: async () => ["93.184.216.34"], resolve6: async () => ["2606:2800:220:1:248:1893:25c8:1946"] },
     probe: async ({ host, port }) => port === 443 ? {
       status: "completed", target: { host, port }, result: {
         protocol: { name: "TLSv1.3", cipher: "TLS_AES_256_GCM_SHA384", perfectForwardSecrecy: true },
@@ -22,7 +37,7 @@ test("domain scan produces DNS, service, evidence, and score output", async () =
     } : { status: "failed", target: { host, port }, error: "connection refused" },
   });
   assert.equal(report.scan.kind, "domain");
-  assert.deepEqual(report.scan.addresses.ipv4, ["192.0.2.10"]);
+  assert.deepEqual(report.scan.addresses.ipv4, ["93.184.216.34"]);
   assert.equal(report.summary.servicesObserved, 1);
   assert.equal(report.summary.servicesFailed, 1);
   assert.equal(report.findings[0].classification, "shor-vulnerable-public-key");

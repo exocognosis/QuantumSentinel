@@ -4,8 +4,8 @@ import { test } from "node:test";
 
 import { createApiServer } from "./app.js";
 
-const listen = async () => {
-  const server = createApiServer();
+const listen = async (options = {}) => {
+  const server = createApiServer(options);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
 
@@ -17,6 +17,43 @@ const listen = async () => {
     }),
   };
 };
+
+test("runs only authorized and rate-limited public domain scans", async () => {
+  const requests = [];
+  const api = await listen({
+    publicScanLimitPerMinute: 1,
+    publicDomainScanner: async (domain, options) => {
+      requests.push({ domain, options });
+      return { scan: { target: domain, kind: "domain" }, findings: [] };
+    },
+  });
+
+  try {
+    const denied = await fetch(`${api.baseUrl}/api/public/domain-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: "example.com" }),
+    });
+    assert.equal(denied.status, 400);
+
+    const accepted = await fetch(`${api.baseUrl}/api/public/domain-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: "example.com", authorized: true }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(requests, [{ domain: "example.com", options: { ports: [443], timeoutMs: 5_000 } }]);
+
+    const limited = await fetch(`${api.baseUrl}/api/public/domain-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: "example.org", authorized: true }),
+    });
+    assert.equal(limited.status, 429);
+  } finally {
+    await api.close();
+  }
+});
 
 const getJson = async (baseUrl, path) => {
   const response = await fetch(`${baseUrl}${path}`);

@@ -12,15 +12,19 @@ import {
   updateMonitorPolicy,
 } from "./probeScheduler.js";
 import { buildReport, listReportTypes } from "./reporting.js";
+import { scanDomain } from "./domainScanner.js";
 import { persistRepositoryScan } from "./repositoryScanPersistence.js";
 import { runRepositoryScan } from "./repositoryScanRunner.js";
 import { analyzeAsset, detectAssetDrift, findingsFromAnalysis } from "./riskEngine.js";
 
+const ALLOWED_ORIGIN = String(process.env.QS_ALLOWED_ORIGIN ?? "*").trim() || "*";
 const JSON_HEADERS = {
-  "access-control-allow-origin": "*",
+  "access-control-allow-origin": ALLOWED_ORIGIN,
   "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
   "access-control-allow-headers": "content-type, accept",
+  "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
+  "x-content-type-options": "nosniff",
 };
 
 const TERMINAL_FINDING_STATUSES = new Set(["accepted_risk", "remediated", "closed"]);
@@ -28,7 +32,7 @@ const REPORT_EXPORT_ROLES = new Set(["auditor", "approver", "admin"]);
 const APPROVER_ROLES = new Set(["approver", "admin"]);
 
 const SSE_HEADERS = {
-  "access-control-allow-origin": "*",
+  "access-control-allow-origin": ALLOWED_ORIGIN,
   "cache-control": "no-cache",
   connection: "keep-alive",
   "content-type": "text/event-stream; charset=utf-8",
@@ -290,6 +294,31 @@ function readJsonBody(request) {
 
     request.on("error", (error) => settle(reject, error));
   });
+}
+
+function publicClientId(request) {
+  const remoteAddress = request.socket?.remoteAddress ?? "unknown";
+  const loopbackProxy = remoteAddress === "127.0.0.1" || remoteAddress === "::1" || remoteAddress === "::ffff:127.0.0.1";
+  if (loopbackProxy) {
+    const forwarded = String(headerValue(request, "x-real-ip") ?? "").trim();
+    if (forwarded) return forwarded;
+  }
+  return remoteAddress;
+}
+
+function createRateLimiter({ limit, windowMs }) {
+  const entries = new Map();
+  return (key) => {
+    const now = Date.now();
+    const current = entries.get(key);
+    if (!current || current.expiresAt <= now) {
+      entries.set(key, { count: 1, expiresAt: now + windowMs });
+      return true;
+    }
+    if (current.count >= limit) return false;
+    current.count += 1;
+    return true;
+  };
 }
 
 function handleEvents(request, response) {
@@ -745,11 +774,21 @@ async function recomputeRisk(datastore, { assetId = null, persist = true } = {})
   };
 }
 
-export function createApiServer({ datastore = null, scheduler = null, schedulerOptions = {} } = {}) {
+export function createApiServer({
+  datastore = null,
+  scheduler = null,
+  schedulerOptions = {},
+  publicDomainScanner = scanDomain,
+  publicScanLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_SCAN_LIMIT_PER_MINUTE ?? "5", 10),
+} = {}) {
   const schedulerRuntime = scheduler ?? createMonitorScheduler({
     datastore,
     persistProbeResult,
     ...schedulerOptions,
+  });
+  const allowPublicScan = createRateLimiter({
+    limit: Number.isInteger(publicScanLimitPerMinute) && publicScanLimitPerMinute > 0 ? publicScanLimitPerMinute : 5,
+    windowMs: 60_000,
   });
 
   const server = http.createServer(async (request, response) => {
@@ -762,6 +801,25 @@ export function createApiServer({ datastore = null, scheduler = null, schedulerO
     const url = new URL(request.url, "http://127.0.0.1");
 
     try {
+      if (request.method === "POST" && url.pathname === "/api/public/domain-scans") {
+        const payload = await readJsonBody(request);
+        if (payload.authorized !== true) {
+          sendJson(response, 400, { error: "authorized must be true before a public scan can run" });
+          return;
+        }
+        if (!allowPublicScan(publicClientId(request))) {
+          sendJson(response, 429, { error: "Public scan rate limit exceeded. Try again later." });
+          return;
+        }
+
+        const report = await publicDomainScanner(payload.domain, {
+          ports: [443],
+          timeoutMs: 5_000,
+        });
+        sendJson(response, 200, { data: report });
+        return;
+      }
+
       if (request.method === "POST" && url.pathname === "/api/probes") {
         const payload = await readJsonBody(request);
         const job = await createProbeJob(payload);

@@ -2,7 +2,6 @@ import { resolve4, resolve6 } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 
 import { createProbeJob } from "./probeEngine.js";
-import { calculateReadinessScore } from "./repositoryScanner.js";
 
 export const DEFAULT_DOMAIN_PORTS = [443];
 export const ALLOWED_DOMAIN_PORTS = [443, 465, 636, 853, 993, 995, 8443, 9443];
@@ -127,6 +126,120 @@ function findingFromJob(domain, job) {
   };
 }
 
+function scoreGrade(score) {
+  if (score >= 90) return "A";
+  if (score >= 75) return "B";
+  if (score >= 60) return "C";
+  if (score >= 40) return "D";
+  return "F";
+}
+
+function factor(id, label, score, maxScore, status, observation, meaning) {
+  return { id, label, score, maxScore, status, observation, meaning };
+}
+
+function publicKeyFactor(certificate = {}) {
+  const algorithm = String(certificate.algorithm ?? "Unknown");
+  if (/ML-KEM|ML-DSA|SLH-DSA|HYBRID/i.test(algorithm)) {
+    return factor("public-key", "Website identity", 30, 30, "strong", algorithm, "The observed website identity uses post-quantum or hybrid protection.");
+  }
+  if (/RSA|ECDSA|ECDH|EC-|X25519|X448|P-?256|P-?384|P-?521|prime256v1/i.test(algorithm)) {
+    return factor("public-key", "Website identity", 0, 30, "risk", algorithm, "The observed website identity uses classical public-key encryption that a future quantum computer could break.");
+  }
+  return factor("public-key", "Website identity", 0, 30, "review", algorithm, "The website identity algorithm needs confirmation before quantum readiness can be established.");
+}
+
+function keyExchangeFactor(protocol = {}) {
+  const key = protocol.keyExchange ?? {};
+  const observation = [key.type, key.name, key.size ? `${key.size}-bit` : null].filter(Boolean).join(" · ") || "Not reported";
+  if (/ML-KEM|KYBER|HYBRID/i.test(observation)) {
+    return factor("key-exchange", "Connection key exchange", 30, 30, "strong", observation, "The observed connection uses post-quantum or hybrid key exchange.");
+  }
+  if (/ECDH|DH|X25519|X448|EC/i.test(observation)) {
+    return factor("key-exchange", "Connection key exchange", 0, 30, "risk", observation, "The observed key exchange is classical. Captured traffic could become readable after a future quantum attack.");
+  }
+  return factor("key-exchange", "Connection key exchange", 0, 30, "review", observation, "The connection key exchange was not identified and needs confirmation.");
+}
+
+function protocolFactor(protocol = {}) {
+  const name = String(protocol.name ?? "Unknown");
+  if (/TLSv?1\.3/i.test(name)) return factor("protocol", "Connection protocol", 15, 15, "strong", name, "The website uses the current TLS protocol for protection against present-day attacks.");
+  if (/TLSv?1\.2/i.test(name)) return factor("protocol", "Connection protocol", 10, 15, "review", name, "The website uses an accepted protocol, but TLS 1.3 provides stronger current protection.");
+  return factor("protocol", "Connection protocol", 0, 15, "risk", name, "The observed protocol is outdated or unknown and needs replacement or confirmation.");
+}
+
+function forwardSecrecyFactor(protocol = {}) {
+  if (protocol.perfectForwardSecrecy === true) {
+    return factor("forward-secrecy", "Forward secrecy", 10, 10, "strong", "Present", "Past traffic is better protected if a server key is stolen. This does not make classical key exchange quantum-safe.");
+  }
+  return factor("forward-secrecy", "Forward secrecy", 0, 10, "risk", "Not observed", "A future server-key compromise could expose previously captured traffic.");
+}
+
+function cipherFactor(protocol = {}) {
+  const cipher = String(protocol.cipher ?? "Unknown");
+  if (/AES[_-]?256|CHACHA20/i.test(cipher)) return factor("data-encryption", "Data encryption", 10, 10, "strong", cipher, "The observed data-encryption strength provides a stronger margin against quantum search attacks.");
+  if (/AES[_-]?128/i.test(cipher)) return factor("data-encryption", "Data encryption", 8, 10, "strong", cipher, "The observed data encryption remains useful, but it has a smaller quantum-security margin than AES-256.");
+  if (/3DES|DES|RC4|NULL/i.test(cipher)) return factor("data-encryption", "Data encryption", 0, 10, "risk", cipher, "The observed data encryption is outdated and creates present-day risk.");
+  return factor("data-encryption", "Data encryption", 0, 10, "review", cipher, "The observed data-encryption strength needs confirmation.");
+}
+
+function certificateFactor(certificate = {}, now = Date.now()) {
+  const expiresAt = certificate.expiresAt ?? null;
+  const expiresTimestamp = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresTimestamp)) return factor("certificate", "Certificate status", 0, 5, "review", "Expiration unknown", "The certificate expiration date could not be confirmed.");
+  const daysRemaining = Math.ceil((expiresTimestamp - now) / 86_400_000);
+  const observation = daysRemaining < 0 ? `Expired ${Math.abs(daysRemaining)} days ago` : `${daysRemaining} days remaining`;
+  if (daysRemaining < 0) return factor("certificate", "Certificate status", 0, 5, "risk", observation, "The public certificate is expired and needs immediate replacement.");
+  if (daysRemaining <= 30) return factor("certificate", "Certificate status", 2, 5, "review", observation, "The certificate expires soon and needs a confirmed renewal plan.");
+  return factor("certificate", "Certificate status", 5, 5, "strong", observation, "The public certificate is currently valid.");
+}
+
+function serviceReadiness(job, now) {
+  const protocol = job.result?.protocol ?? {};
+  const certificate = job.result?.certificate ?? {};
+  const breakdown = [
+    publicKeyFactor(certificate),
+    keyExchangeFactor(protocol),
+    protocolFactor(protocol),
+    forwardSecrecyFactor(protocol),
+    cipherFactor(protocol),
+    certificateFactor(certificate, now),
+  ];
+  const readinessScore = breakdown.reduce((sum, item) => sum + item.score, 0);
+  return {
+    endpoint: `${job.target.host}:${job.target.port}`,
+    readinessScore,
+    grade: scoreGrade(readinessScore),
+    breakdown,
+  };
+}
+
+export function calculateWebsiteReadinessScore(jobs, { now = Date.now() } = {}) {
+  const assessedServices = jobs
+    .filter((job) => job.status === "completed" && job.result)
+    .map((job) => serviceReadiness(job, now));
+  if (!assessedServices.length) {
+    return {
+      readinessScore: 0,
+      grade: "N/A",
+      assessmentStatus: "unassessed",
+      assessedEndpoint: null,
+      breakdown: [],
+      method: "No public TLS service completed, so QuantumSentinel could not calculate a website readiness score.",
+    };
+  }
+  const lowest = assessedServices.toSorted((left, right) => left.readinessScore - right.readinessScore)[0];
+  return {
+    readinessScore: lowest.readinessScore,
+    grade: lowest.grade,
+    assessmentStatus: "assessed",
+    assessedEndpoint: lowest.endpoint,
+    breakdown: lowest.breakdown,
+    serviceScores: assessedServices.map(({ endpoint, readinessScore, grade }) => ({ endpoint, readinessScore, grade })),
+    method: "100 weighted points: website identity 30, connection key exchange 30, connection protocol 15, forward secrecy 10, data encryption 10, and certificate status 5. Multiple services use the lowest observed score.",
+  };
+}
+
 export async function scanDomain(domain, options = {}) {
   const { hostname, ports } = normalizeDomainScanInput(domain, options.ports);
   const startedAt = new Date().toISOString();
@@ -153,7 +266,7 @@ export async function scanDomain(domain, options = {}) {
     schemaVersion: "1.0.0",
     scanner: { name: "QuantumSentinel External Q-Day Scanner", version: "0.1.0" },
     scan: { target: hostname, targetName: hostname, kind: "domain", startedAt, completedAt, filesScanned: jobs.length, bytesScanned: 0, ports, addresses, failedServices },
-    score: calculateReadinessScore(findings),
+    score: calculateWebsiteReadinessScore(jobs),
     summary: { totalFindings: findings.length, servicesRequested: ports.length, servicesObserved: jobs.length - failedServices.length, servicesFailed: failedServices.length, byClassification, bySeverity },
     findings,
     services: jobs,

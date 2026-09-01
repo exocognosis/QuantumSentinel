@@ -262,6 +262,9 @@ function tlsResult({ host, port, timeoutMs, connectHost = host, servername }) {
       const certificate = socket.getPeerCertificate(false);
       const cipher = socket.getCipher();
       const protocolName = socket.getProtocol() ?? "Unknown";
+      const ephemeralKey = typeof socket.getEphemeralKeyInfo === "function"
+        ? socket.getEphemeralKeyInfo()
+        : null;
       const algorithm = certificateAlgorithm(certificate);
       const perfectForwardSecrecy = protocolName === "TLSv1.3" || /DHE/i.test(cipher?.name ?? "");
       const expired = isExpired(certificate.valid_to);
@@ -280,6 +283,11 @@ function tlsResult({ host, port, timeoutMs, connectHost = host, servername }) {
           name: protocolName,
           cipher: cipher?.standardName ?? cipher?.name ?? "Unknown",
           perfectForwardSecrecy,
+          keyExchange: ephemeralKey ? {
+            type: ephemeralKey.type ?? null,
+            name: ephemeralKey.name ?? null,
+            size: ephemeralKey.size ?? null,
+          } : null,
         },
         certificate: {
           subject: certificateName(certificate.subject),

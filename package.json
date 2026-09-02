@@ -8,7 +8,8 @@
     "node": ">=20.19"
   },
   "bin": {
-    "quantumsentinel": "scripts/quantumsentinel.mjs"
+    "quantumsentinel": "scripts/quantumsentinel.mjs",
+    "quantumsentinel-connect": "scripts/quantumsentinel-connect.mjs"
   },
   "scripts": {
     "start": "node scripts/start.mjs",

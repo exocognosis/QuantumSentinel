@@ -137,6 +137,90 @@ test("limits concurrent public repository scans", async () => {
   }
 });
 
+test("runs only authorized and rate-limited uploaded file scans", async () => {
+  const requests = [];
+  const api = await listen({
+    publicFileScanLimitPerMinute: 1,
+    publicFileScanner: async (file, options) => {
+      requests.push({ file, options });
+      return { scan: { targetName: file.filename, kind: "uploaded-file" }, findings: [] };
+    },
+  });
+
+  try {
+    const denied = await fetch(`${api.baseUrl}/api/public/file-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "crypto.js", content: "RSA" }),
+    });
+    assert.equal(denied.status, 400);
+
+    const accepted = await fetch(`${api.baseUrl}/api/public/file-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "crypto.js", content: "RSA", authorized: true }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(requests, [{
+      file: { filename: "crypto.js", content: "RSA" },
+      options: { maxFileBytes: 512 * 1024, maxFindings: 250 },
+    }]);
+
+    const limited = await fetch(`${api.baseUrl}/api/public/file-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "second.js", content: "ECDSA", authorized: true }),
+    });
+    assert.equal(limited.status, 429);
+  } finally {
+    await api.close();
+  }
+});
+
+test("creates a protected network connector session and accepts one scoped result", async () => {
+  const api = await listen({ publicNetworkSessionLimitPerMinute: 2 });
+
+  try {
+    const createdResponse = await fetch(`${api.baseUrl}/api/public/network-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hosts: ["10.0.0.10"], ports: [443], authorized: true }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json()).data;
+    assert.equal(created.status, "waiting_for_connector");
+
+    const deniedRead = await fetch(`${api.baseUrl}/api/public/network-scans/${created.id}`);
+    assert.equal(deniedRead.status, 403);
+
+    const job = {
+      id: "probe-connector",
+      mode: "discovery",
+      status: "completed",
+      result: {
+        summary: { targetsScanned: 1, completedCount: 1, failedCount: 0 },
+        observations: [{ host: "10.0.0.10", port: 443, status: "completed" }],
+      },
+    };
+    const submittedResponse = await fetch(`${api.baseUrl}/api/public/network-scans/${created.id}/results`, {
+      method: "POST",
+      headers: { "authorization": `Bearer ${created.uploadToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ job }),
+    });
+    assert.equal(submittedResponse.status, 200);
+
+    const resultResponse = await fetch(`${api.baseUrl}/api/public/network-scans/${created.id}`, {
+      headers: { "authorization": `Bearer ${created.readToken}` },
+    });
+    assert.equal(resultResponse.status, 200);
+    const result = (await resultResponse.json()).data;
+    assert.equal(result.status, "completed");
+    assert.equal(result.result.result.observations[0].host, "10.0.0.10");
+  } finally {
+    await api.close();
+  }
+});
+
 const getJson = async (baseUrl, path) => {
   const response = await fetch(`${baseUrl}${path}`);
   const body = await response.json();

@@ -15,13 +15,15 @@ import { buildReport, listReportTypes } from "./reporting.js";
 import { scanDomain } from "./domainScanner.js";
 import { persistRepositoryScan } from "./repositoryScanPersistence.js";
 import { normalizePublicGitHubRepositorySource, runRepositoryScan } from "./repositoryScanRunner.js";
+import { scanUploadedFile } from "./repositoryScanner.js";
+import { createPublicNetworkSessionStore, readBearerToken } from "./publicNetworkSessions.js";
 import { analyzeAsset, detectAssetDrift, findingsFromAnalysis } from "./riskEngine.js";
 
 const ALLOWED_ORIGIN = String(process.env.QS_ALLOWED_ORIGIN ?? "*").trim() || "*";
 const JSON_HEADERS = {
   "access-control-allow-origin": ALLOWED_ORIGIN,
   "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
-  "access-control-allow-headers": "content-type, accept",
+  "access-control-allow-headers": "content-type, accept, authorization",
   "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
   "x-content-type-options": "nosniff",
@@ -783,6 +785,10 @@ export function createApiServer({
   publicRepositoryScanner = runRepositoryScan,
   publicRepositoryScanLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_REPOSITORY_SCAN_LIMIT_PER_MINUTE ?? "2", 10),
   publicRepositoryScanConcurrency = Number.parseInt(process.env.QS_PUBLIC_REPOSITORY_SCAN_CONCURRENCY ?? "1", 10),
+  publicFileScanner = scanUploadedFile,
+  publicFileScanLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_FILE_SCAN_LIMIT_PER_MINUTE ?? "5", 10),
+  publicNetworkSessionLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_NETWORK_SESSION_LIMIT_PER_MINUTE ?? "2", 10),
+  publicNetworkSessions = createPublicNetworkSessionStore(),
 } = {}) {
   const schedulerRuntime = scheduler ?? createMonitorScheduler({
     datastore,
@@ -795,6 +801,14 @@ export function createApiServer({
   });
   const allowPublicRepositoryScan = createRateLimiter({
     limit: Number.isInteger(publicRepositoryScanLimitPerMinute) && publicRepositoryScanLimitPerMinute > 0 ? publicRepositoryScanLimitPerMinute : 2,
+    windowMs: 60_000,
+  });
+  const allowPublicFileScan = createRateLimiter({
+    limit: Number.isInteger(publicFileScanLimitPerMinute) && publicFileScanLimitPerMinute > 0 ? publicFileScanLimitPerMinute : 5,
+    windowMs: 60_000,
+  });
+  const allowPublicNetworkSession = createRateLimiter({
+    limit: Number.isInteger(publicNetworkSessionLimitPerMinute) && publicNetworkSessionLimitPerMinute > 0 ? publicNetworkSessionLimitPerMinute : 2,
     windowMs: 60_000,
   });
   const publicRepositoryConcurrency = Number.isInteger(publicRepositoryScanConcurrency) && publicRepositoryScanConcurrency > 0
@@ -810,8 +824,53 @@ export function createApiServer({
     }
 
     const url = new URL(request.url, "http://127.0.0.1");
+    const publicNetworkMatch = /^\/api\/public\/network-scans\/([0-9a-f-]+)(\/results)?$/.exec(url.pathname);
 
     try {
+      if (request.method === "POST" && url.pathname === "/api/public/file-scans") {
+        const payload = await readJsonBody(request);
+        if (payload.authorized !== true) {
+          sendJson(response, 400, { error: "authorized must be true before an uploaded file can be scanned" });
+          return;
+        }
+        if (!allowPublicFileScan(publicClientId(request))) {
+          sendJson(response, 429, { error: "Public file scan rate limit exceeded. Try again later." });
+          return;
+        }
+        const report = await publicFileScanner({ filename: payload.filename, content: payload.content }, {
+          maxFileBytes: 512 * 1024,
+          maxFindings: 250,
+        });
+        sendJson(response, 200, { data: report });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/public/network-scans") {
+        const payload = await readJsonBody(request);
+        if (payload.authorized !== true) {
+          sendJson(response, 400, { error: "authorized must be true before a network scan session can be created" });
+          return;
+        }
+        if (!allowPublicNetworkSession(publicClientId(request))) {
+          sendJson(response, 429, { error: "Public network session rate limit exceeded. Try again later." });
+          return;
+        }
+        sendJson(response, 201, { data: publicNetworkSessions.create(payload) });
+        return;
+      }
+
+      if (request.method === "GET" && publicNetworkMatch && !publicNetworkMatch[2]) {
+        sendJson(response, 200, { data: publicNetworkSessions.get(publicNetworkMatch[1], readBearerToken(request)) });
+        return;
+      }
+
+      if (request.method === "POST" && publicNetworkMatch?.[2] === "/results") {
+        const payload = await readJsonBody(request);
+        const job = payload.job ?? payload.result ?? payload.data;
+        sendJson(response, 200, { data: publicNetworkSessions.submit(publicNetworkMatch[1], readBearerToken(request), job) });
+        return;
+      }
+
       if (request.method === "POST" && url.pathname === "/api/public/domain-scans") {
         const payload = await readJsonBody(request);
         if (payload.authorized !== true) {

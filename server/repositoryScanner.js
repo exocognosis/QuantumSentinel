@@ -38,7 +38,10 @@ function isTextCandidate(path) { return TEXT_FILENAMES.has(basename(path)) || TE
 function redactEvidence(line) {
   const trimmed = line.trim().replace(/\s+/g, " ").slice(0, 240);
   if (/-----BEGIN .*PRIVATE KEY-----/i.test(trimmed)) return "[private-key header redacted]";
-  return trimmed.replace(/((?:api[_-]?key|secret|password|token)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/[A-Za-z0-9+/=_-]{80,}/g, "[long value redacted]");
+  return trimmed
+    .replace(/(["'](?:api[_-]?key|secret|password|token)["']\s*:\s*)["'][^"']*["']/gi, '$1"[redacted]"')
+    .replace(/((?:api[_-]?key|secret|password|token)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+    .replace(/[A-Za-z0-9+/=_-]{80,}/g, "[long value redacted]");
 }
 function confidenceFor(path, line) {
   const name = basename(path);
@@ -57,6 +60,27 @@ function contextFor(path, line) {
   if (/lock|depend|package|cargo|pom|gradle|requirements/.test(text)) return "dependency";
   return "usage-unverified";
 }
+
+function scanContent({ content, relativePath, findings, maxFindings }) {
+  for (const [index, line] of content.split(/\r?\n/).entries()) {
+    for (const rule of RULES) {
+      rule.pattern.lastIndex = 0;
+      const matches = [...line.matchAll(rule.pattern)];
+      if (!matches.length) continue;
+      if (findings.length >= maxFindings) return true;
+      const confidence = confidenceFor(relativePath, line);
+      findings.push({
+        id: createHash("sha256").update(`${relativePath}:${index + 1}:${rule.id}:${matches[0][0]}`).digest("hex").slice(0, 16),
+        ruleId: rule.id, algorithm: rule.label, matchedValue: matches[0][0], classification: rule.classification,
+        severity: rule.severity, confidence, usage: contextFor(relativePath, line),
+        evidence: { file: relativePath, line: index + 1, excerpt: redactEvidence(line) },
+        rationale: rule.rationale, recommendation: rule.migration,
+      });
+    }
+  }
+  return false;
+}
+
 async function collectFiles(root, { maxFiles, maxFileBytes, maxTotalBytes }) {
   const files = [];
   let selectedBytes = 0;
@@ -136,24 +160,9 @@ export async function scanRepository(inputPath, options = {}) {
     try { content = await readFile(file.path, "utf8"); } catch { inventory.skipped.unreadableFiles += 1; continue; }
     bytesScanned += file.bytes;
     const relativePath = normalizePath(relative(root, file.path));
-    for (const [index, line] of content.split(/\r?\n/).entries()) {
-      for (const rule of RULES) {
-        rule.pattern.lastIndex = 0;
-        const matches = [...line.matchAll(rule.pattern)];
-        if (!matches.length) continue;
-        if (findings.length >= maxFindings) {
-          findingLimitReached = true;
-          break scanFiles;
-        }
-        const confidence = confidenceFor(relativePath, line);
-        findings.push({
-          id: createHash("sha256").update(`${relativePath}:${index + 1}:${rule.id}:${matches[0][0]}`).digest("hex").slice(0, 16),
-          ruleId: rule.id, algorithm: rule.label, matchedValue: matches[0][0], classification: rule.classification,
-          severity: rule.severity, confidence, usage: contextFor(relativePath, line),
-          evidence: { file: relativePath, line: index + 1, excerpt: redactEvidence(line) },
-          rationale: rule.rationale, recommendation: rule.migration,
-        });
-      }
+    if (scanContent({ content, relativePath, findings, maxFindings })) {
+      findingLimitReached = true;
+      break scanFiles;
     }
   }
   findings.sort((left, right) => left.evidence.file.localeCompare(right.evidence.file) || left.evidence.line - right.evidence.line || left.ruleId.localeCompare(right.ruleId));
@@ -170,4 +179,64 @@ export async function scanRepository(inputPath, options = {}) {
     ],
   };
 }
+
+export async function scanUploadedFile({ filename, content } = {}, options = {}) {
+  const maxFileBytes = options.maxFileBytes ?? 512 * 1024;
+  const maxFindings = options.maxFindings ?? 250;
+  const safeName = basename(String(filename ?? "").trim());
+  if (!safeName || safeName !== String(filename ?? "").trim()) {
+    throw new Error("filename must contain one file name without a path");
+  }
+  if (!isTextCandidate(safeName)) {
+    throw new Error("file type is not supported for text scanning");
+  }
+  if (typeof content !== "string") {
+    throw new Error("file content must be text");
+  }
+  if (content.includes("\0")) {
+    throw new Error("binary files are not supported");
+  }
+  const bytesScanned = Buffer.byteLength(content, "utf8");
+  if (bytesScanned > maxFileBytes) {
+    throw new Error(`file exceeds the ${Math.floor(maxFileBytes / 1024)} KB upload limit`);
+  }
+
+  const startedAt = new Date().toISOString();
+  const findings = [];
+  const findingLimitReached = scanContent({
+    content,
+    relativePath: safeName,
+    findings,
+    maxFindings,
+  });
+  findings.sort((left, right) => left.evidence.line - right.evidence.line || left.ruleId.localeCompare(right.ruleId));
+  const completedAt = new Date().toISOString();
+  return {
+    schemaVersion: "1.0.0",
+    scanner: { name: "QuantumSentinel Q-Day Scanner", version: "0.1.0" },
+    scan: {
+      target: safeName,
+      targetName: safeName,
+      kind: "uploaded-file",
+      startedAt,
+      completedAt,
+      filesScanned: 1,
+      bytesScanned,
+      limitReached: findingLimitReached,
+      findingLimitReached,
+      skipped: { excludedDirectories: 0, oversizedFiles: 0, totalByteBudgetFiles: 0, nonTextFiles: 0, unreadableFiles: 0 },
+      exclusions: [],
+    },
+    score: calculateReadinessScore(findings),
+    summary: summarize(findings),
+    findings,
+    limitations: [
+      "The uploaded file is scanned as text and is not executed.",
+      "Static textual detection does not prove that every referenced algorithm is reachable or operationally deployed.",
+      "One file does not establish the quantum readiness of an application or organization.",
+      "A high readiness score is not a certification, audit opinion, or guarantee of quantum safety.",
+    ],
+  };
+}
+
 export function scannerRules() { return RULES.map(({ pattern: _pattern, ...rule }) => ({ ...rule })); }

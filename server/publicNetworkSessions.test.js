@@ -27,20 +27,25 @@ test("network session accepts one scoped connector result and protects reads", (
 
   assert.equal(created.status, "waiting_for_connector");
   assert.throws(() => store.get(created.id, "wrong"), /token is invalid/);
+  assert.equal(created.uploadToken, undefined);
+  const connected = store.connect(created.deviceCode);
+  assert.equal(connected.status, "connector_connected");
+  assert.throws(() => store.connect(created.deviceCode), /invalid or expired|already been used/);
   assert.throws(() => store.submit(created.id, "wrong", completedJob()), /token is invalid/);
 
-  const submitted = store.submit(created.id, created.uploadToken, completedJob());
+  const submitted = store.submit(created.id, connected.uploadToken, completedJob());
   assert.equal(submitted.status, "completed");
   assert.equal(store.get(created.id, created.readToken).result.result.observations.length, 1);
-  assert.throws(() => store.submit(created.id, created.uploadToken, completedJob()), /already has a result/);
+  assert.throws(() => store.submit(created.id, connected.uploadToken, completedJob()), /already has a result/);
 });
 
 test("network session rejects connector observations outside the approved scope", () => {
   const store = createPublicNetworkSessionStore();
   const created = store.create({ hosts: ["10.0.0.10"], ports: [443] });
+  const connected = store.connect(created.deviceCode);
 
   assert.throws(
-    () => store.submit(created.id, created.uploadToken, completedJob("10.0.0.11", 443)),
+    () => store.submit(created.id, connected.uploadToken, completedJob("10.0.0.11", 443)),
     /outside the approved scope/,
   );
 });
@@ -52,4 +57,29 @@ test("network session expires and removes access to pending data", () => {
 
   timestamp += 1_001;
   assert.throws(() => store.get(created.id, created.readToken), /not found or has expired/);
+});
+
+test("network session limits active sessions per client", () => {
+  const store = createPublicNetworkSessionStore({ maxActiveSessionsPerClient: 2 });
+  store.create({ hosts: ["10.0.0.10"], ports: [443] }, { clientKey: "client-a" });
+  store.create({ hosts: ["10.0.0.11"], ports: [443] }, { clientKey: "client-a" });
+
+  assert.throws(
+    () => store.create({ hosts: ["10.0.0.12"], ports: [443] }, { clientKey: "client-a" }),
+    /too many active network scan sessions for this client/,
+  );
+  assert.doesNotThrow(
+    () => store.create({ hosts: ["10.0.0.12"], ports: [443] }, { clientKey: "client-b" }),
+  );
+});
+
+test("network session evicts a completed session before denying new work", () => {
+  const store = createPublicNetworkSessionStore({ maxSessions: 1 });
+  const first = store.create({ hosts: ["10.0.0.10"], ports: [443] }, { clientKey: "client-a" });
+  const connected = store.connect(first.deviceCode);
+  store.submit(first.id, connected.uploadToken, completedJob());
+
+  const second = store.create({ hosts: ["10.0.0.11"], ports: [443] }, { clientKey: "client-b" });
+  assert.equal(second.status, "waiting_for_connector");
+  assert.throws(() => store.get(first.id, first.readToken), /not found or has expired/);
 });

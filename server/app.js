@@ -1,4 +1,5 @@
 import http from "node:http";
+import { BlockList, isIP } from "node:net";
 
 import { createProbeJob, getProbeJob, listProbeJobs } from "./probeEngine.js";
 import {
@@ -32,6 +33,15 @@ const JSON_HEADERS = {
 const TERMINAL_FINDING_STATUSES = new Set(["accepted_risk", "remediated", "closed"]);
 const REPORT_EXPORT_ROLES = new Set(["auditor", "approver", "admin"]);
 const APPROVER_ROLES = new Set(["approver", "admin"]);
+const MAX_JSON_BODY_BYTES = 1_000_000;
+const TRUSTED_PROXY_IPV4 = new BlockList();
+const TRUSTED_PROXY_IPV6 = new BlockList();
+for (const [address, prefix] of [["127.0.0.0", 8], ["10.0.0.0", 8], ["172.16.0.0", 12], ["192.168.0.0", 16]]) {
+  TRUSTED_PROXY_IPV4.addSubnet(address, prefix, "ipv4");
+}
+for (const [address, prefix] of [["::1", 128], ["fc00::", 7]]) {
+  TRUSTED_PROXY_IPV6.addSubnet(address, prefix, "ipv6");
+}
 
 const SSE_HEADERS = {
   "access-control-allow-origin": ALLOWED_ORIGIN,
@@ -260,6 +270,17 @@ async function requireApprovedAction(datastore, approvalId, {
 }
 
 function readJsonBody(request) {
+  const rawContentLength = headerValue(request, "content-length");
+  if (rawContentLength != null) {
+    const contentLength = Number(rawContentLength);
+    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+      return Promise.reject(jsonError("Invalid Content-Length header"));
+    }
+    if (contentLength > MAX_JSON_BODY_BYTES) {
+      return Promise.reject(jsonError("Request body too large", 413));
+    }
+  }
+
   return new Promise((resolve, reject) => {
     let settled = false;
     let body = "";
@@ -275,7 +296,7 @@ function readJsonBody(request) {
       if (settled) return;
 
       body += chunk;
-      if (body.length > 1_000_000) {
+      if (body.length > MAX_JSON_BODY_BYTES) {
         settle(reject, jsonError("Request body too large", 413));
         body = "";
       }
@@ -298,20 +319,38 @@ function readJsonBody(request) {
   });
 }
 
-function publicClientId(request) {
+function isTrustedProxyPeer(address) {
+  if (isIP(address) === 4) return TRUSTED_PROXY_IPV4.check(address, "ipv4");
+  if (isIP(address) === 6) {
+    if (address.toLowerCase().startsWith("::ffff:")) {
+      const mappedAddress = address.slice("::ffff:".length);
+      return isIP(mappedAddress) === 4 && TRUSTED_PROXY_IPV4.check(mappedAddress, "ipv4");
+    }
+    return TRUSTED_PROXY_IPV6.check(address, "ipv6");
+  }
+  return false;
+}
+
+export function publicClientId(request) {
   const remoteAddress = request.socket?.remoteAddress ?? "unknown";
-  const loopbackProxy = remoteAddress === "127.0.0.1" || remoteAddress === "::1" || remoteAddress === "::ffff:127.0.0.1";
-  if (loopbackProxy) {
+  if (isTrustedProxyPeer(remoteAddress)) {
     const forwarded = String(headerValue(request, "x-real-ip") ?? "").trim();
-    if (forwarded) return forwarded;
+    if (isIP(forwarded)) return forwarded;
   }
   return remoteAddress;
 }
 
 function createRateLimiter({ limit, windowMs }) {
   const entries = new Map();
+  let nextCleanupAt = 0;
   return (key) => {
     const now = Date.now();
+    if (now >= nextCleanupAt) {
+      for (const [entryKey, entry] of entries) {
+        if (entry.expiresAt <= now) entries.delete(entryKey);
+      }
+      nextCleanupAt = now + windowMs;
+    }
     const current = entries.get(key);
     if (!current || current.expiresAt <= now) {
       entries.set(key, { count: 1, expiresAt: now + windowMs });
@@ -788,6 +827,8 @@ export function createApiServer({
   publicFileScanner = scanUploadedFile,
   publicFileScanLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_FILE_SCAN_LIMIT_PER_MINUTE ?? "5", 10),
   publicNetworkSessionLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_NETWORK_SESSION_LIMIT_PER_MINUTE ?? "2", 10),
+  publicNetworkConnectLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_NETWORK_CONNECT_LIMIT_PER_MINUTE ?? "10", 10),
+  publicNetworkResultLimitPerMinute = Number.parseInt(process.env.QS_PUBLIC_NETWORK_RESULT_LIMIT_PER_MINUTE ?? "10", 10),
   publicNetworkSessions = createPublicNetworkSessionStore(),
 } = {}) {
   const schedulerRuntime = scheduler ?? createMonitorScheduler({
@@ -809,6 +850,14 @@ export function createApiServer({
   });
   const allowPublicNetworkSession = createRateLimiter({
     limit: Number.isInteger(publicNetworkSessionLimitPerMinute) && publicNetworkSessionLimitPerMinute > 0 ? publicNetworkSessionLimitPerMinute : 2,
+    windowMs: 60_000,
+  });
+  const allowPublicNetworkConnect = createRateLimiter({
+    limit: Number.isInteger(publicNetworkConnectLimitPerMinute) && publicNetworkConnectLimitPerMinute > 0 ? publicNetworkConnectLimitPerMinute : 10,
+    windowMs: 60_000,
+  });
+  const allowPublicNetworkResult = createRateLimiter({
+    limit: Number.isInteger(publicNetworkResultLimitPerMinute) && publicNetworkResultLimitPerMinute > 0 ? publicNetworkResultLimitPerMinute : 10,
     windowMs: 60_000,
   });
   const publicRepositoryConcurrency = Number.isInteger(publicRepositoryScanConcurrency) && publicRepositoryScanConcurrency > 0
@@ -840,6 +889,7 @@ export function createApiServer({
         const report = await publicFileScanner({ filename: payload.filename, content: payload.content }, {
           maxFileBytes: 512 * 1024,
           maxFindings: 250,
+          maxLines: 50_000,
         });
         sendJson(response, 200, { data: report });
         return;
@@ -855,7 +905,19 @@ export function createApiServer({
           sendJson(response, 429, { error: "Public network session rate limit exceeded. Try again later." });
           return;
         }
-        sendJson(response, 201, { data: publicNetworkSessions.create(payload) });
+        sendJson(response, 201, {
+          data: publicNetworkSessions.create(payload, { clientKey: publicClientId(request) }),
+        });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/public/network-scans/connect") {
+        const payload = await readJsonBody(request);
+        if (!allowPublicNetworkConnect(publicClientId(request))) {
+          sendJson(response, 429, { error: "Network connector rate limit exceeded. Try again later." });
+          return;
+        }
+        sendJson(response, 200, { data: publicNetworkSessions.connect(payload.deviceCode) });
         return;
       }
 
@@ -865,6 +927,10 @@ export function createApiServer({
       }
 
       if (request.method === "POST" && publicNetworkMatch?.[2] === "/results") {
+        if (!allowPublicNetworkResult(publicClientId(request))) {
+          sendJson(response, 429, { error: "Network scan result rate limit exceeded. Try again later." });
+          return;
+        }
         const payload = await readJsonBody(request);
         const job = payload.job ?? payload.result ?? payload.data;
         sendJson(response, 200, { data: publicNetworkSessions.submit(publicNetworkMatch[1], readBearerToken(request), job) });

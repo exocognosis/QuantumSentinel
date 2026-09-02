@@ -4,6 +4,7 @@ import { validateProbeRequest } from "./probeEngine.js";
 
 const DEFAULT_TTL_MS = 15 * 60 * 1_000;
 const DEFAULT_MAX_SESSIONS = 100;
+const DEFAULT_MAX_ACTIVE_SESSIONS_PER_CLIENT = 2;
 const MAX_RESULT_BYTES = 750_000;
 
 function sessionError(message, statusCode = 400) {
@@ -19,6 +20,10 @@ function digestToken(token) {
 function tokenMatches(token, digest) {
   if (!digest || typeof token !== "string" || !token) return false;
   return timingSafeEqual(digestToken(token), digest);
+}
+
+function newDeviceCode() {
+  return randomBytes(12).toString("hex").toUpperCase().match(/.{1,6}/g).join("-");
 }
 
 function bearerToken(value) {
@@ -64,14 +69,27 @@ export function readBearerToken(request) {
 export function createPublicNetworkSessionStore({
   ttlMs = DEFAULT_TTL_MS,
   maxSessions = DEFAULT_MAX_SESSIONS,
+  maxActiveSessionsPerClient = DEFAULT_MAX_ACTIVE_SESSIONS_PER_CLIENT,
   now = () => Date.now(),
 } = {}) {
   const sessions = new Map();
+  const activeSessionLimit = Number.isInteger(maxActiveSessionsPerClient) && maxActiveSessionsPerClient > 0
+    ? maxActiveSessionsPerClient
+    : DEFAULT_MAX_ACTIVE_SESSIONS_PER_CLIENT;
 
   function removeExpired() {
     const timestamp = now();
     for (const [id, session] of sessions) {
       if (session.expiresAtMs <= timestamp) sessions.delete(id);
+    }
+  }
+
+  function evictCompletedForCapacity() {
+    removeExpired();
+    if (sessions.size < maxSessions) return;
+    for (const [id, session] of sessions) {
+      if (session.status === "completed") sessions.delete(id);
+      if (sessions.size < maxSessions) return;
     }
   }
 
@@ -95,8 +113,15 @@ export function createPublicNetworkSessionStore({
   }
 
   return {
-    create(input) {
-      removeExpired();
+    create(input, { clientKey = "unknown" } = {}) {
+      evictCompletedForCapacity();
+      const clientKeyDigest = digestToken(clientKey).toString("hex");
+      const activeForClient = [...sessions.values()].filter((session) => (
+        session.clientKeyDigest === clientKeyDigest && session.status !== "completed"
+      )).length;
+      if (activeForClient >= activeSessionLimit) {
+        throw sessionError("too many active network scan sessions for this client", 429);
+      }
       if (sessions.size >= maxSessions) {
         throw sessionError("too many active network scan sessions", 503);
       }
@@ -108,8 +133,8 @@ export function createPublicNetworkSessionStore({
         timeoutMs: Math.min(5_000, Number(input?.timeoutMs) || 1_500),
       });
       const id = randomUUID();
-      const uploadToken = randomBytes(32).toString("base64url");
       const readToken = randomBytes(32).toString("base64url");
+      const deviceCode = newDeviceCode();
       const createdAtMs = now();
       const expiresAtMs = createdAtMs + ttlMs;
       const session = {
@@ -119,6 +144,7 @@ export function createPublicNetworkSessionStore({
         expiresAt: new Date(expiresAtMs).toISOString(),
         createdAtMs,
         expiresAtMs,
+        clientKeyDigest,
         completedAt: null,
         scope: {
           hosts: scope.hosts,
@@ -126,12 +152,40 @@ export function createPublicNetworkSessionStore({
           concurrency: scope.concurrency,
           timeoutMs: scope.timeoutMs,
         },
-        uploadTokenDigest: digestToken(uploadToken),
+        deviceCodeDigest: digestToken(deviceCode),
+        uploadTokenDigest: null,
         readTokenDigest: digestToken(readToken),
         result: null,
       };
       sessions.set(id, session);
-      return { ...publicView(session), uploadToken, readToken };
+      return { ...publicView(session), deviceCode, readToken };
+    },
+
+    connect(deviceCode) {
+      removeExpired();
+      const normalizedCode = String(deviceCode ?? "").trim().toUpperCase();
+      let session = null;
+      for (const candidate of sessions.values()) {
+        if (tokenMatches(normalizedCode, candidate.deviceCodeDigest)) {
+          session = candidate;
+          break;
+        }
+      }
+      if (!session) throw sessionError("network scan device code is invalid or expired", 403);
+      if (session.status !== "waiting_for_connector") {
+        throw sessionError("network scan device code has already been used", 409);
+      }
+      const uploadToken = randomBytes(32).toString("base64url");
+      session.deviceCodeDigest = null;
+      session.uploadTokenDigest = digestToken(uploadToken);
+      session.status = "connector_connected";
+      return {
+        id: session.id,
+        status: session.status,
+        expiresAt: session.expiresAt,
+        scope: structuredClone(session.scope),
+        uploadToken,
+      };
     },
 
     get(id, token) {
@@ -144,7 +198,7 @@ export function createPublicNetworkSessionStore({
 
     submit(id, token, job) {
       const session = requireSession(id);
-      if (session.status !== "waiting_for_connector" || !session.uploadTokenDigest) {
+      if (session.status !== "connector_connected" || !session.uploadTokenDigest) {
         throw sessionError("network scan session already has a result", 409);
       }
       if (!tokenMatches(token, session.uploadTokenDigest)) {

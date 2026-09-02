@@ -14,6 +14,11 @@ test("domain scan rejects private and reserved network addresses", async () => {
   assert.equal(isPublicAddress("127.0.0.1"), false);
   assert.equal(isPublicAddress("10.0.0.1"), false);
   assert.equal(isPublicAddress("2001:db8::1"), false);
+  assert.equal(isPublicAddress("64:ff9b::a9fe:a9fe"), false);
+  assert.equal(isPublicAddress("64:ff9b:1::a9fe:a9fe"), false);
+  assert.equal(isPublicAddress("2002:a9fe:a9fe::"), false);
+  assert.equal(isPublicAddress("2001:0000:4136:e378:8000:63bf:3fff:fdd2"), false);
+  assert.equal(isPublicAddress("fec0::1"), false);
 
   await assert.rejects(
     scanDomain("internal.example", {
@@ -38,6 +43,8 @@ test("domain scan produces DNS, service, evidence, and score output", async () =
   });
   assert.equal(report.scan.kind, "domain");
   assert.deepEqual(report.scan.addresses.ipv4, ["93.184.216.34"]);
+  assert.equal(report.scan.assessedAddress, "93.184.216.34");
+  assert.match(report.limitations.join(" "), /assessed only 93\.184\.216\.34/);
   assert.equal(report.summary.servicesObserved, 1);
   assert.equal(report.summary.servicesFailed, 1);
   assert.equal(report.findings[0].classification, "shor-vulnerable-public-key");
@@ -45,6 +52,9 @@ test("domain scan produces DNS, service, evidence, and score output", async () =
   assert.equal(report.score.rating, "Migration required");
   assert.equal(report.score.breakdown.length, 6);
   assert.deepEqual(report.score.breakdown.map((item) => item.score), [0, 0, 15, 10, 10, 5]);
+  assert.ok(report.score.breakdown.every((item) => item.action));
+  assert.match(report.score.breakdown.find((item) => item.id === "key-exchange").action, /X25519MLKEM768/);
+  assert.match(report.score.breakdown.find((item) => item.id === "forward-secrecy").meaning, /does not stop future quantum decryption/);
   assert.match(report.interpretation.internalInference, /do not establish/);
 });
 
@@ -68,6 +78,13 @@ test("website readiness score differentiates transport and certificate evidence"
   assert.equal(weakerScore.readinessScore, 20);
   assert.equal(weakerScore.breakdown.find((item) => item.id === "certificate").status, "review");
   assert.ok(currentScore.readinessScore > weakerScore.readinessScore);
+
+  const expired = structuredClone(current);
+  expired.result.certificate.expiresAt = "2026-08-31T23:59:59Z";
+  const expiredFactor = calculateWebsiteReadinessScore([expired], { now }).breakdown.find((item) => item.id === "certificate");
+  assert.equal(expiredFactor.score, 0);
+  assert.equal(expiredFactor.status, "risk");
+  assert.equal(expiredFactor.observation, "Expired less than 1 day ago");
 });
 
 test("website readiness score reports unassessed when no service completes", () => {

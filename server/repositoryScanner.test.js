@@ -63,6 +63,13 @@ test("uploaded file scanner analyzes text without a filesystem checkout", async 
   assert.equal(result.summary.byClassification["shor-vulnerable-public-key"], 1);
   assert.equal(result.summary.byClassification.pqc, 1);
   assert.match(result.findings[0].evidence.excerpt, /\[redacted\]/);
+
+  const awsSecret = await scanUploadedFile({
+    filename: "credentials.js",
+    content: 'const AWS_SECRET_ACCESS_KEY = "short-secret-value"; const privateKey = "another-secret"; const signing = "RSA-2048";',
+  });
+  assert.doesNotMatch(awsSecret.findings[0].evidence.excerpt, /short-secret-value|another-secret/);
+  assert.match(awsSecret.findings[0].evidence.excerpt, /\[redacted\]/);
 });
 
 test("uploaded file scanner rejects paths, binary data, unsupported types, and oversized files", async () => {
@@ -75,11 +82,23 @@ test("uploaded file scanner rejects paths, binary data, unsupported types, and o
     /file type is not supported/,
   );
   await assert.rejects(
+    scanUploadedFile({ filename: ".env", content: "API_KEY=secret" }),
+    /file type is not supported/,
+  );
+  await assert.rejects(
+    scanUploadedFile({ filename: "private.pem", content: "-----BEGIN PRIVATE KEY-----" }),
+    /file type is not supported/,
+  );
+  await assert.rejects(
     scanUploadedFile({ filename: "crypto.js", content: "RSA\0binary" }),
     /binary files are not supported/,
   );
   await assert.rejects(
     scanUploadedFile({ filename: "crypto.js", content: "x".repeat(33) }, { maxFileBytes: 32 }),
     /upload limit/,
+  );
+  await assert.rejects(
+    scanUploadedFile({ filename: "crypto.js", content: "\n".repeat(10) }, { maxLines: 10 }),
+    /line upload limit/,
   );
 });

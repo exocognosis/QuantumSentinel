@@ -6,6 +6,7 @@ const DEFAULT_MAX_FILES = 25_000;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 250 * 1024 * 1024;
 const DEFAULT_MAX_FINDINGS = 10_000;
+const DEFAULT_MAX_UPLOAD_LINES = 50_000;
 const EXCLUDED_DIRECTORIES = new Set([
   ".git", ".hg", ".svn", ".quantumsentinel", "node_modules", "target", "dist", "build",
   "coverage", ".next", ".nuxt", "vendor", "Pods", ".venv", "venv", "__pycache__",
@@ -22,6 +23,10 @@ const TEXT_FILENAMES = new Set([
   "Cargo.lock", "Cargo.toml", "Dockerfile", "Gemfile", "Gemfile.lock", "go.mod", "go.sum",
   "package-lock.json", "package.json", "Pipfile", "Pipfile.lock", "pom.xml", "requirements.txt",
 ]);
+const PUBLIC_UPLOAD_BLOCKED_EXTENSIONS = new Set([".env", ".pem"]);
+const SECRET_LABEL = "(?:aws[_-]?secret[_-]?access[_-]?key|private[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|auth(?:orization)?[_-]?token|signing[_-]?key|encryption[_-]?key|api[_-]?key|credential|secret|password|token)";
+const QUOTED_SECRET_PATTERN = new RegExp(`(["']${SECRET_LABEL}["']\\s*:\\s*)["'][^"']*["']`, "gi");
+const ASSIGNED_SECRET_PATTERN = new RegExp(`(${SECRET_LABEL}\\s*[:=]\\s*)(?:["'][^"']*["']|[^\\s,;]+)`, "gi");
 
 const RULES = [
   { id: "deprecated-md5", label: "MD5", pattern: /\b(?:md5|MD5WithRSA|EVP_md5)\b/gi, classification: "deprecated", severity: "CRITICAL", migration: "Replace with an approved SHA-256 or stronger construction", rationale: "MD5 is cryptographically broken and should be removed independently of the quantum threat." },
@@ -35,12 +40,18 @@ const RULES = [
 
 function normalizePath(path) { return path.split("\\").join("/"); }
 function isTextCandidate(path) { return TEXT_FILENAMES.has(basename(path)) || TEXT_EXTENSIONS.has(extname(path).toLowerCase()); }
+function isPublicUploadCandidate(path) { return isTextCandidate(path) && !PUBLIC_UPLOAD_BLOCKED_EXTENSIONS.has(extname(path).toLowerCase()); }
+function scannerValidationError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
 function redactEvidence(line) {
   const trimmed = line.trim().replace(/\s+/g, " ").slice(0, 240);
   if (/-----BEGIN .*PRIVATE KEY-----/i.test(trimmed)) return "[private-key header redacted]";
   return trimmed
-    .replace(/(["'](?:api[_-]?key|secret|password|token)["']\s*:\s*)["'][^"']*["']/gi, '$1"[redacted]"')
-    .replace(/((?:api[_-]?key|secret|password|token)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+    .replace(QUOTED_SECRET_PATTERN, '$1"[redacted]"')
+    .replace(ASSIGNED_SECRET_PATTERN, "$1[redacted]")
     .replace(/[A-Za-z0-9+/=_-]{80,}/g, "[long value redacted]");
 }
 function confidenceFor(path, line) {
@@ -79,6 +90,17 @@ function scanContent({ content, relativePath, findings, maxFindings }) {
     }
   }
   return false;
+}
+
+function requireBoundedLineCount(content, maxLines) {
+  let lines = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) !== 10) continue;
+    lines += 1;
+    if (lines > maxLines) {
+      throw scannerValidationError(`file exceeds the ${maxLines} line upload limit`);
+    }
+  }
 }
 
 async function collectFiles(root, { maxFiles, maxFileBytes, maxTotalBytes }) {
@@ -183,23 +205,25 @@ export async function scanRepository(inputPath, options = {}) {
 export async function scanUploadedFile({ filename, content } = {}, options = {}) {
   const maxFileBytes = options.maxFileBytes ?? 512 * 1024;
   const maxFindings = options.maxFindings ?? 250;
+  const maxLines = options.maxLines ?? DEFAULT_MAX_UPLOAD_LINES;
   const safeName = basename(String(filename ?? "").trim());
   if (!safeName || safeName !== String(filename ?? "").trim()) {
-    throw new Error("filename must contain one file name without a path");
+    throw scannerValidationError("filename must contain one file name without a path");
   }
-  if (!isTextCandidate(safeName)) {
-    throw new Error("file type is not supported for text scanning");
+  if (!isPublicUploadCandidate(safeName)) {
+    throw scannerValidationError("file type is not supported for text scanning");
   }
   if (typeof content !== "string") {
-    throw new Error("file content must be text");
+    throw scannerValidationError("file content must be text");
   }
   if (content.includes("\0")) {
-    throw new Error("binary files are not supported");
+    throw scannerValidationError("binary files are not supported");
   }
   const bytesScanned = Buffer.byteLength(content, "utf8");
   if (bytesScanned > maxFileBytes) {
-    throw new Error(`file exceeds the ${Math.floor(maxFileBytes / 1024)} KB upload limit`);
+    throw scannerValidationError(`file exceeds the ${Math.floor(maxFileBytes / 1024)} KB upload limit`);
   }
+  requireBoundedLineCount(content, maxLines);
 
   const startedAt = new Date().toISOString();
   const findings = [];

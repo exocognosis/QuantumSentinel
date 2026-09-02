@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
 
-import { createApiServer } from "./app.js";
+import { createApiServer, publicClientId } from "./app.js";
 
 const listen = async (options = {}) => {
   const server = createApiServer(options);
@@ -17,6 +17,25 @@ const listen = async (options = {}) => {
     }),
   };
 };
+
+test("uses one validated client IP from trusted local and Docker proxies", () => {
+  assert.equal(publicClientId({
+    socket: { remoteAddress: "172.17.0.1" },
+    headers: { "x-real-ip": "203.0.113.10" },
+  }), "203.0.113.10");
+  assert.equal(publicClientId({
+    socket: { remoteAddress: "::ffff:127.0.0.1" },
+    headers: { "x-real-ip": "2001:db8::10" },
+  }), "2001:db8::10");
+  assert.equal(publicClientId({
+    socket: { remoteAddress: "172.17.0.1" },
+    headers: { "x-real-ip": "203.0.113.10, 198.51.100.2" },
+  }), "172.17.0.1");
+  assert.equal(publicClientId({
+    socket: { remoteAddress: "8.8.8.8" },
+    headers: { "x-real-ip": "203.0.113.10" },
+  }), "8.8.8.8");
+});
 
 test("runs only authorized and rate-limited public domain scans", async () => {
   const requests = [];
@@ -163,7 +182,7 @@ test("runs only authorized and rate-limited uploaded file scans", async () => {
     assert.equal(accepted.status, 200);
     assert.deepEqual(requests, [{
       file: { filename: "crypto.js", content: "RSA" },
-      options: { maxFileBytes: 512 * 1024, maxFindings: 250 },
+      options: { maxFileBytes: 512 * 1024, maxFindings: 250, maxLines: 50_000 },
     }]);
 
     const limited = await fetch(`${api.baseUrl}/api/public/file-scans`, {
@@ -189,9 +208,19 @@ test("creates a protected network connector session and accepts one scoped resul
     assert.equal(createdResponse.status, 201);
     const created = (await createdResponse.json()).data;
     assert.equal(created.status, "waiting_for_connector");
+    assert.equal(created.uploadToken, undefined);
 
     const deniedRead = await fetch(`${api.baseUrl}/api/public/network-scans/${created.id}`);
     assert.equal(deniedRead.status, 403);
+
+    const connectedResponse = await fetch(`${api.baseUrl}/api/public/network-scans/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: created.deviceCode }),
+    });
+    assert.equal(connectedResponse.status, 200);
+    const connected = (await connectedResponse.json()).data;
+    assert.equal(connected.status, "connector_connected");
 
     const job = {
       id: "probe-connector",
@@ -204,7 +233,7 @@ test("creates a protected network connector session and accepts one scoped resul
     };
     const submittedResponse = await fetch(`${api.baseUrl}/api/public/network-scans/${created.id}/results`, {
       method: "POST",
-      headers: { "authorization": `Bearer ${created.uploadToken}`, "content-type": "application/json" },
+      headers: { "authorization": `Bearer ${connected.uploadToken}`, "content-type": "application/json" },
       body: JSON.stringify({ job }),
     });
     assert.equal(submittedResponse.status, 200);
@@ -216,6 +245,45 @@ test("creates a protected network connector session and accepts one scoped resul
     const result = (await resultResponse.json()).data;
     assert.equal(result.status, "completed");
     assert.equal(result.result.result.observations[0].host, "10.0.0.10");
+  } finally {
+    await api.close();
+  }
+});
+
+test("rate limits network result uploads before reading their bodies", async () => {
+  const api = await listen({ publicNetworkResultLimitPerMinute: 1 });
+  const resultPath = "/api/public/network-scans/123e4567-e89b-12d3-a456-426614174000/results";
+
+  try {
+    const first = await fetch(`${api.baseUrl}${resultPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(first.status, 404);
+
+    const second = await fetch(`${api.baseUrl}${resultPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(100_000) }),
+    });
+    assert.equal(second.status, 429);
+  } finally {
+    await api.close();
+  }
+});
+
+test("rejects an oversized declared request body before JSON parsing", async () => {
+  const api = await listen({ publicNetworkResultLimitPerMinute: 2 });
+  const resultPath = "/api/public/network-scans/123e4567-e89b-12d3-a456-426614174000/results";
+
+  try {
+    const response = await fetch(`${api.baseUrl}${resultPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(1_000_000) }),
+    });
+    assert.equal(response.status, 413);
   } finally {
     await api.close();
   }

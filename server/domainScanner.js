@@ -7,7 +7,8 @@ export const DEFAULT_DOMAIN_PORTS = [443];
 export const ALLOWED_DOMAIN_PORTS = [443, 465, 636, 853, 993, 995, 8443, 9443];
 const MAX_DOMAIN_PORTS = 8;
 
-const NON_PUBLIC_ADDRESSES = new BlockList();
+const NON_PUBLIC_IPV4_ADDRESSES = new BlockList();
+const NON_PUBLIC_IPV6_ADDRESSES = new BlockList();
 for (const [address, prefix] of [
   ["0.0.0.0", 8],
   ["10.0.0.0", 8],
@@ -24,18 +25,27 @@ for (const [address, prefix] of [
   ["224.0.0.0", 4],
   ["240.0.0.0", 4],
 ]) {
-  NON_PUBLIC_ADDRESSES.addSubnet(address, prefix, "ipv4");
+  NON_PUBLIC_IPV4_ADDRESSES.addSubnet(address, prefix, "ipv4");
 }
 for (const [address, prefix] of [
   ["::", 128],
   ["::1", 128],
+  ["::ffff:0:0", 96],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
   ["100::", 64],
+  ["2001::", 32],
+  ["2001:2::", 48],
+  ["2001:10::", 28],
+  ["2001:20::", 28],
   ["2001:db8::", 32],
+  ["2002::", 16],
   ["fc00::", 7],
   ["fe80::", 10],
+  ["fec0::", 10],
   ["ff00::", 8],
 ]) {
-  NON_PUBLIC_ADDRESSES.addSubnet(address, prefix, "ipv6");
+  NON_PUBLIC_IPV6_ADDRESSES.addSubnet(address, prefix, "ipv6");
 }
 
 function validHostname(hostname) {
@@ -64,10 +74,10 @@ async function resolveAddresses(hostname, resolver = { resolve4, resolve6 }) {
 
 export function isPublicAddress(address) {
   const family = isIP(address);
-  if (family === 4) return !NON_PUBLIC_ADDRESSES.check(address, "ipv4");
+  if (family === 4) return !NON_PUBLIC_IPV4_ADDRESSES.check(address, "ipv4");
   if (family === 6) {
     if (address.toLowerCase().startsWith("::ffff:")) return false;
-    return !NON_PUBLIC_ADDRESSES.check(address, "ipv6");
+    return !NON_PUBLIC_IPV6_ADDRESSES.check(address, "ipv6");
   }
   return false;
 }
@@ -132,64 +142,106 @@ function readinessRating(score) {
   return "Migration required";
 }
 
-function factor(id, label, score, maxScore, status, observation, meaning) {
-  return { id, label, score, maxScore, status, observation, meaning };
+function factor(id, label, score, maxScore, status, observation, meaning, action) {
+  return { id, label, score, maxScore, status, observation, meaning, action };
 }
 
 function publicKeyFactor(certificate = {}) {
   const algorithm = String(certificate.algorithm ?? "Unknown");
-  if (/ML-KEM|ML-DSA|SLH-DSA|HYBRID/i.test(algorithm)) {
-    return factor("public-key", "Website identity", 30, 30, "strong", algorithm, "The observed website identity uses post-quantum or hybrid protection.");
+  if (/ML-DSA|SLH-DSA|SPHINCS/i.test(algorithm)) {
+    return factor("public-key", "Website identity", 30, 30, "strong", algorithm,
+      "The certificate uses post-quantum or hybrid identity protection.",
+      "Confirm that the complete certificate chain uses approved algorithms and cannot fall back to classical-only identity.");
   }
   if (/RSA|ECDSA|ECDH|EC-|X25519|X448|P-?256|P-?384|P-?521|prime256v1/i.test(algorithm)) {
-    return factor("public-key", "Website identity", 0, 30, "risk", algorithm, "The observed website identity uses classical public-key encryption that a future quantum computer could break.");
+    return factor("public-key", "Website identity", 0, 30, "risk", algorithm,
+      "The certificate uses a classical identity key. A future quantum computer could recover that key and impersonate the website.",
+      "Record the certificate provider, renewal owner, and migration trigger. Replace the identity algorithm when browsers and certificate authorities support an approved post-quantum option.");
   }
-  return factor("public-key", "Website identity", 0, 30, "review", algorithm, "The website identity algorithm needs confirmation before quantum readiness can be established.");
+  return factor("public-key", "Website identity", 0, 30, "review", algorithm,
+    "The scanner could not identify the certificate identity algorithm.",
+    "Inspect the complete certificate chain and record each identity algorithm.");
 }
 
 function keyExchangeFactor(protocol = {}) {
   const key = protocol.keyExchange ?? {};
   const observation = [key.type, key.name, key.size ? `${key.size}-bit` : null].filter(Boolean).join(" · ") || "Not reported";
   if (/ML-KEM|KYBER|HYBRID/i.test(observation)) {
-    return factor("key-exchange", "Connection key exchange", 30, 30, "strong", observation, "The observed connection uses post-quantum or hybrid key exchange.");
+    return factor("key-exchange", "Connection key exchange", 30, 30, "strong", observation,
+      "This connection negotiated hybrid or post-quantum key exchange. This reduces the risk that a future quantum computer can decrypt recorded traffic.",
+      "Keep hybrid key exchange enabled. Test fallback paths so supported clients cannot be forced to use classical key exchange.");
   }
   if (/ECDH|DH|X25519|X448|EC/i.test(observation)) {
-    return factor("key-exchange", "Connection key exchange", 0, 30, "risk", observation, "The observed key exchange is classical. Captured traffic could become readable after a future quantum attack.");
+    return factor("key-exchange", "Connection key exchange", 0, 30, "risk", observation,
+      "This connection used classical key exchange. An attacker could record the traffic now and decrypt it after a future quantum break.",
+      "Enable hybrid X25519MLKEM768 on the website edge. Verify that supported clients negotiate it.");
   }
-  return factor("key-exchange", "Connection key exchange", 0, 30, "review", observation, "The connection key exchange was not identified and needs confirmation.");
+  return factor("key-exchange", "Connection key exchange", 0, 30, "review", observation,
+    "The scanner could not identify the negotiated key exchange.",
+    "Test the website with an ML-KEM-capable TLS probe and confirm the negotiated key exchange.");
 }
 
 function protocolFactor(protocol = {}) {
   const name = String(protocol.name ?? "Unknown");
-  if (/TLSv?1\.3/i.test(name)) return factor("protocol", "Connection protocol", 15, 15, "strong", name, "The website uses the current TLS protocol for protection against present-day attacks.");
-  if (/TLSv?1\.2/i.test(name)) return factor("protocol", "Connection protocol", 10, 15, "review", name, "The website uses an accepted protocol, but TLS 1.3 provides stronger current protection.");
-  return factor("protocol", "Connection protocol", 0, 15, "risk", name, "The observed protocol is outdated or unknown and needs replacement or confirmation.");
+  if (/TLSv?1\.3/i.test(name)) return factor("protocol", "Connection protocol", 15, 15, "strong", name,
+    "TLS 1.3 removes obsolete protocol features. Quantum protection still depends on the negotiated key exchange.",
+    "Keep TLS 1.3 enabled. Pair it with hybrid ML-KEM key exchange.");
+  if (/TLSv?1\.2/i.test(name)) return factor("protocol", "Connection protocol", 10, 15, "review", name,
+    "TLS 1.2 permits legacy cipher suites and configurations that TLS 1.3 removes. It does not provide quantum protection by itself.",
+    "Move supported clients to TLS 1.3. Test compatibility before you disable TLS 1.2.");
+  return factor("protocol", "Connection protocol", 0, 15, "risk", name,
+    "The connection used an obsolete protocol, or the scanner could not identify it.",
+    "Require TLS 1.3 and confirm the change with a new scan.");
 }
 
 function forwardSecrecyFactor(protocol = {}) {
   if (protocol.perfectForwardSecrecy === true) {
-    return factor("forward-secrecy", "Forward secrecy", 10, 10, "strong", "Present", "Past traffic is better protected if a server key is stolen. This does not make classical key exchange quantum-safe.");
+    return factor("forward-secrecy", "Forward secrecy", 10, 10, "strong", "Present",
+      "Forward secrecy limits damage if the server's long-term key is stolen. It does not stop future quantum decryption of recorded sessions that used classical key exchange.",
+      "Keep forward secrecy enabled. Add hybrid ML-KEM to protect recorded traffic from future quantum decryption.");
   }
-  return factor("forward-secrecy", "Forward secrecy", 0, 10, "risk", "Not observed", "A future server-key compromise could expose previously captured traffic.");
+  return factor("forward-secrecy", "Forward secrecy", 0, 10, "risk", "Not observed",
+    "A stolen server key could expose past traffic. This is separate from the quantum risk in classical key exchange.",
+    "Enable TLS 1.3 or ECDHE now. Then add hybrid ML-KEM key exchange.");
 }
 
 function cipherFactor(protocol = {}) {
   const cipher = String(protocol.cipher ?? "Unknown");
-  if (/AES[_-]?256|CHACHA20/i.test(cipher)) return factor("data-encryption", "Data encryption", 10, 10, "strong", cipher, "The observed data-encryption strength provides a stronger margin against quantum search attacks.");
-  if (/AES[_-]?128/i.test(cipher)) return factor("data-encryption", "Data encryption", 8, 10, "strong", cipher, "The observed data encryption remains useful, but it has a smaller quantum-security margin than AES-256.");
-  if (/3DES|DES|RC4|NULL/i.test(cipher)) return factor("data-encryption", "Data encryption", 0, 10, "risk", cipher, "The observed data encryption is outdated and creates present-day risk.");
-  return factor("data-encryption", "Data encryption", 0, 10, "review", cipher, "The observed data-encryption strength needs confirmation.");
+  if (/AES[_-]?256|CHACHA20/i.test(cipher)) return factor("data-encryption", "Data encryption", 10, 10, "strong", cipher,
+    "The cipher uses a 256-bit symmetric key. It retains more security margin against quantum search than a 128-bit key.",
+    "Keep the 256-bit data cipher enabled. Complete the identity and key-exchange migration separately.");
+  if (/AES[_-]?128/i.test(cipher)) return factor("data-encryption", "Data encryption", 8, 10, "review", cipher,
+    "AES-128 protects data today but has less margin against future quantum search than AES-256.",
+    "Use AES-256 where data must remain confidential for many years. Confirm performance and client support first.");
+  if (/3DES|DES|RC4|NULL/i.test(cipher)) return factor("data-encryption", "Data encryption", 0, 10, "risk", cipher,
+    "The data cipher is obsolete and creates a security risk today.",
+    "Disable this cipher. Use AES-GCM or ChaCha20-Poly1305 through TLS 1.3.");
+  return factor("data-encryption", "Data encryption", 0, 10, "review", cipher,
+    "The scanner could not confirm the data cipher strength.",
+    "Inspect the enabled cipher policy and confirm the negotiated cipher with a new scan.");
 }
 
 function certificateFactor(certificate = {}, now = Date.now()) {
   const expiresAt = certificate.expiresAt ?? null;
   const expiresTimestamp = Date.parse(expiresAt);
-  if (!Number.isFinite(expiresTimestamp)) return factor("certificate", "Certificate status", 0, 5, "review", "Expiration unknown", "The certificate expiration date could not be confirmed.");
+  if (!Number.isFinite(expiresTimestamp)) return factor("certificate", "Certificate expiration", 0, 5, "review", "Expiration unknown",
+    "The scanner could not confirm the certificate expiration date.",
+    "Inspect the certificate chain and confirm the expiration and renewal settings.");
+  if (expiresTimestamp <= now) {
+    const fullDaysExpired = Math.floor((now - expiresTimestamp) / 86_400_000);
+    const observation = fullDaysExpired === 0 ? "Expired less than 1 day ago" : `Expired ${fullDaysExpired} days ago`;
+    return factor("certificate", "Certificate expiration", 0, 5, "risk", observation,
+      "The certificate is expired. Browsers cannot rely on it for current website identity.",
+      "Replace the certificate now. Confirm automated renewal before you restore service.");
+  }
   const daysRemaining = Math.ceil((expiresTimestamp - now) / 86_400_000);
-  const observation = daysRemaining < 0 ? `Expired ${Math.abs(daysRemaining)} days ago` : `${daysRemaining} days remaining`;
-  if (daysRemaining < 0) return factor("certificate", "Certificate status", 0, 5, "risk", observation, "The public certificate is expired and needs immediate replacement.");
-  if (daysRemaining <= 30) return factor("certificate", "Certificate status", 2, 5, "review", observation, "The certificate expires soon and needs a confirmed renewal plan.");
-  return factor("certificate", "Certificate status", 5, 5, "strong", observation, "The public certificate is currently valid.");
+  const observation = `${daysRemaining} days remaining`;
+  if (daysRemaining <= 30) return factor("certificate", "Certificate expiration", 2, 5, "review", observation,
+    "The certificate expires within 30 days.",
+    "Renew the certificate before it expires. Confirm that automated renewal works.");
+  return factor("certificate", "Certificate expiration", 5, 5, "strong", observation,
+    "The certificate has not expired. This does not confirm its trust chain or make its identity algorithm quantum-safe.",
+    "Keep automated renewal active. Plan the post-quantum identity migration separately.");
 }
 
 function serviceReadiness(job, now) {
@@ -263,7 +315,7 @@ export async function scanDomain(domain, options = {}) {
   return {
     schemaVersion: "1.0.0",
     scanner: { name: "QuantumSentinel External Q-Day Scanner", version: "0.1.0" },
-    scan: { target: hostname, targetName: hostname, kind: "domain", startedAt, completedAt, filesScanned: jobs.length, bytesScanned: 0, ports, addresses, failedServices },
+    scan: { target: hostname, targetName: hostname, kind: "domain", startedAt, completedAt, filesScanned: jobs.length, bytesScanned: 0, ports, addresses, assessedAddress: connectHost, failedServices },
     score: calculateWebsiteReadinessScore(jobs),
     summary: { totalFindings: findings.length, servicesRequested: ports.length, servicesObserved: jobs.length - failedServices.length, servicesFailed: failedServices.length, byClassification, bySeverity },
     findings,
@@ -276,6 +328,7 @@ export async function scanDomain(domain, options = {}) {
     limitations: [
       "This is an authorized, externally observable cryptographic posture assessment, not a penetration test or general web-vulnerability scan.",
       "A CDN, proxy, load balancer, or hosted edge may conceal the origin service and internal cryptographic dependencies.",
+      `This scan assessed only ${connectHost}, the first public address returned by DNS. Other active edge addresses can have different configurations.`,
       "The scan does not prove support for every TLS group or fallback path and does not inspect application vulnerabilities.",
       "A high readiness score is not a certification, audit opinion, or guarantee of quantum safety.",
     ],

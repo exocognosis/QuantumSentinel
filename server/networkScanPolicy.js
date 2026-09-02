@@ -1,7 +1,29 @@
 import net from "node:net";
 
 export const LOCAL_NETWORK_DISCOVERY_MODE = "local-network";
-export const LOCAL_NETWORK_PORTS = Object.freeze([443, 8443, 9443, 993, 995, 465, 636, 853]);
+export const LOCAL_NETWORK_SERVICE_GROUPS = Object.freeze([
+  Object.freeze({
+    id: "web-apps",
+    label: "Websites and business applications",
+    ports: Object.freeze([80, 443, 8080, 8443, 9443]),
+  }),
+  Object.freeze({
+    id: "email",
+    label: "Email and communications",
+    ports: Object.freeze([25, 465, 587, 993, 995]),
+  }),
+  Object.freeze({
+    id: "identity-files",
+    label: "Sign-in and file access",
+    ports: Object.freeze([389, 445, 636]),
+  }),
+  Object.freeze({
+    id: "remote-network",
+    label: "Remote access and network services",
+    ports: Object.freeze([22, 53, 853, 3389]),
+  }),
+]);
+export const LOCAL_NETWORK_PORTS = Object.freeze(LOCAL_NETWORK_SERVICE_GROUPS.flatMap((group) => group.ports));
 export const LOCAL_NETWORK_MAX_HOSTS = 254;
 export const LOCAL_NETWORK_MAX_OBSERVATIONS = 400;
 export const LOCAL_NETWORK_TIMEOUT_MS = 300;

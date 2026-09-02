@@ -208,6 +208,8 @@ test("automatic network scan uses fixed limits and uploads only reachable servic
   assert.equal(uploaded.result.summary.targetsScanned, 254 * LOCAL_NETWORK_PORTS.length);
   assert.equal(uploaded.result.summary.reachableCount, 1);
   assert.equal(uploaded.result.summary.failedCount, (254 * LOCAL_NETWORK_PORTS.length) - 1);
+  assert.equal(uploaded.result.scanProfile.serviceGroups.length, 4);
+  assert.deepEqual(uploaded.result.scanProfile.serviceGroups.flatMap((group) => group.ports), LOCAL_NETWORK_PORTS);
 });
 
 test("automatic network results cap uploaded evidence and keep accurate totals", () => {

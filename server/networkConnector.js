@@ -10,6 +10,7 @@ import {
   LOCAL_NETWORK_MAX_HOSTS,
   LOCAL_NETWORK_MAX_OBSERVATIONS,
   LOCAL_NETWORK_PORTS,
+  LOCAL_NETWORK_SERVICE_GROUPS,
   LOCAL_NETWORK_TIMEOUT_MS,
   privateSlash24FromAddress,
 } from "./networkScanPolicy.js";
@@ -95,8 +96,10 @@ export function discoverPrimaryPrivateNetwork(interfaces = networkInterfaces()) 
 export async function confirmLocalNetworkDiscovery(discovery, { input = process.stdin, output = process.stdout } = {}) {
   output.write("\nQuantumSentinel found this private network:\n");
   output.write(`Network: ${discovery.cidr}\n`);
-  output.write(`Service ports: ${LOCAL_NETWORK_PORTS.join(", ")}\n`);
-  output.write(`Maximum devices: ${LOCAL_NETWORK_MAX_HOSTS}\n\n`);
+  output.write(`Possible device addresses: ${LOCAL_NETWORK_MAX_HOSTS}\n`);
+  output.write("Checks:\n");
+  for (const group of LOCAL_NETWORK_SERVICE_GROUPS) output.write(`- ${group.label}\n`);
+  output.write("\n");
   const prompt = createInterface({ input, output });
   try {
     const answer = await prompt.question("Type SCAN to approve this network scan: ");
@@ -149,6 +152,13 @@ export function buildLocalNetworkJob(discovery, scanResult) {
       observedAt: scanResult?.observedAt ?? new Date().toISOString(),
       source: LOCAL_NETWORK_DISCOVERY_MODE,
       discovery: { cidr: discovery.cidr },
+      scanProfile: {
+        serviceGroups: LOCAL_NETWORK_SERVICE_GROUPS.map((group) => ({
+          id: group.id,
+          label: group.label,
+          ports: [...group.ports],
+        })),
+      },
       summary: {
         targetsScanned,
         hostsScanned: discovery.hosts.length,

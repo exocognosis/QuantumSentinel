@@ -264,7 +264,7 @@ test("creates an automatic local network session without browser-supplied target
     assert.equal(created.status, "waiting_for_connector");
     assert.equal(created.scope.discoveryMode, "local-network");
     assert.equal(created.scope.hosts, undefined);
-    assert.deepEqual(created.scope.ports, [443, 8443, 9443, 993, 995, 465, 636, 853]);
+    assert.deepEqual(created.scope.ports, [80, 443, 8080, 8443, 9443, 25, 465, 587, 993, 995, 389, 445, 636, 22, 53, 853, 3389]);
 
     const connectedResponse = await fetch(`${api.baseUrl}/api/public/network-scans/connect`, {
       method: "POST",

@@ -136,7 +136,7 @@ test("automatic network sessions reject unsafe targets and false reachability", 
 
   assert.throws(
     () => store.submit(created.id, connected.uploadToken, completedAutomaticJob({
-      observations: [{ host: "192.168.4.10", port: 80, status: "completed", reachability: { tcp: true } }],
+      observations: [{ host: "192.168.4.10", port: 21, status: "completed", reachability: { tcp: true } }],
     })),
     /outside the allowed network scope/,
   );

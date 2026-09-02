@@ -250,6 +250,36 @@ test("creates a protected network connector session and accepts one scoped resul
   }
 });
 
+test("creates an automatic local network session without browser-supplied targets", async () => {
+  const api = await listen({ publicNetworkSessionLimitPerMinute: 2 });
+
+  try {
+    const createdResponse = await fetch(`${api.baseUrl}/api/public/network-scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ discoveryMode: "local-network", authorized: true }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json()).data;
+    assert.equal(created.status, "waiting_for_connector");
+    assert.equal(created.scope.discoveryMode, "local-network");
+    assert.equal(created.scope.hosts, undefined);
+    assert.deepEqual(created.scope.ports, [443, 8443, 9443, 993, 995, 465, 636, 853]);
+
+    const connectedResponse = await fetch(`${api.baseUrl}/api/public/network-scans/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: created.deviceCode }),
+    });
+    assert.equal(connectedResponse.status, 200);
+    const connected = (await connectedResponse.json()).data;
+    assert.equal(connected.scope.discoveryMode, "local-network");
+    assert.equal(connected.scope.maxHosts, 254);
+  } finally {
+    await api.close();
+  }
+});
+
 test("rate limits network result uploads before reading their bodies", async () => {
   const api = await listen({ publicNetworkResultLimitPerMinute: 1 });
   const resultPath = "/api/public/network-scans/123e4567-e89b-12d3-a456-426614174000/results";

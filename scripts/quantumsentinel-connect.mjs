@@ -10,7 +10,7 @@ Usage:
   quantumsentinel-connect
   quantumsentinel-connect --code DEVICE-CODE
 
-The connector prompts for the device code when --code is omitted. It shows the approved targets and requires local confirmation before it scans.
+The connector prompts for the device code when --code is omitted. It finds the private network, shows what it will scan, and asks for confirmation.
 `;
 }
 
@@ -23,7 +23,7 @@ try {
   if (!options.deviceCode) options.deviceCode = await promptForDeviceCode();
   const job = await runNetworkConnector(options);
   const summary = job.result.summary;
-  process.stdout.write(`Network scan complete. ${summary.completedCount} of ${summary.targetsScanned} host-port targets returned evidence.\n`);
+  process.stdout.write(`Network scan complete. QuantumSentinel found ${summary.completedCount} reachable services.\n`);
   process.stdout.write("The result was sent to the active Dytallix browser session.\n");
 } catch (error) {
   process.stderr.write(`QuantumSentinel connector: ${error.message}\n\n${usage()}`);

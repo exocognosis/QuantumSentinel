@@ -2,6 +2,14 @@ import net from "node:net";
 import tls from "node:tls";
 import { execFile } from "node:child_process";
 
+import {
+  isRfc1918Ipv4,
+  LOCAL_NETWORK_CONCURRENCY,
+  LOCAL_NETWORK_MAX_HOSTS,
+  LOCAL_NETWORK_PORTS,
+  LOCAL_NETWORK_TIMEOUT_MS,
+} from "./networkScanPolicy.js";
+
 const DEFAULT_TLS_PORT = 443;
 const DEFAULT_TLS_TIMEOUT_MS = 5_000;
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 1_000;
@@ -438,6 +446,29 @@ async function discoveryResult({ hosts, ports, timeoutMs, concurrency = 4 }) {
     observations,
     findings: observations.flatMap((observation) => observation.findings ?? []),
   };
+}
+
+export async function scanLocalNetworkTargets({ hosts, ports, timeoutMs, concurrency } = {}) {
+  if (!Array.isArray(hosts) || hosts.length === 0 || hosts.length > LOCAL_NETWORK_MAX_HOSTS) {
+    throw new ProbeValidationError(`local network scans require between 1 and ${LOCAL_NETWORK_MAX_HOSTS} hosts`);
+  }
+  const normalizedHosts = Array.from(new Set(hosts.map((host) => String(host ?? "").trim())));
+  if (normalizedHosts.length !== hosts.length || normalizedHosts.some((host) => !isRfc1918Ipv4(host))) {
+    throw new ProbeValidationError("local network scan hosts must be unique private IPv4 addresses");
+  }
+  if (!Array.isArray(ports) || ports.length !== LOCAL_NETWORK_PORTS.length
+      || ports.some((port, index) => Number(port) !== LOCAL_NETWORK_PORTS[index])) {
+    throw new ProbeValidationError("local network scans must use the approved service ports");
+  }
+  if (timeoutMs !== LOCAL_NETWORK_TIMEOUT_MS || concurrency !== LOCAL_NETWORK_CONCURRENCY) {
+    throw new ProbeValidationError("local network scans must use the fixed scan limits");
+  }
+  return discoveryResult({
+    hosts: normalizedHosts,
+    ports: [...LOCAL_NETWORK_PORTS],
+    timeoutMs: LOCAL_NETWORK_TIMEOUT_MS,
+    concurrency: LOCAL_NETWORK_CONCURRENCY,
+  });
 }
 
 function runPortCommand(command, args) {

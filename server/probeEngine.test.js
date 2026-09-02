@@ -4,7 +4,18 @@ import net from "node:net";
 import { test } from "node:test";
 
 import { createApiServer } from "./app.js";
-import { createProbeJob, listProbeJobs, portsFromListenerOutput, resetProbeJobs } from "./probeEngine.js";
+import {
+  createProbeJob,
+  listProbeJobs,
+  portsFromListenerOutput,
+  resetProbeJobs,
+  scanLocalNetworkTargets,
+} from "./probeEngine.js";
+import {
+  LOCAL_NETWORK_CONCURRENCY,
+  LOCAL_NETWORK_PORTS,
+  LOCAL_NETWORK_TIMEOUT_MS,
+} from "./networkScanPolicy.js";
 
 const listen = async () => {
   const server = createApiServer();
@@ -123,6 +134,34 @@ test("network discovery probes multiple authorized ports with bounded concurrenc
   } finally {
     await reachable.close();
   }
+});
+
+test("local network discovery rejects targets or limits outside its fixed policy", async () => {
+  const validRequest = {
+    hosts: ["192.168.10.1"],
+    ports: [...LOCAL_NETWORK_PORTS],
+    concurrency: LOCAL_NETWORK_CONCURRENCY,
+    timeoutMs: LOCAL_NETWORK_TIMEOUT_MS,
+  };
+  await assert.rejects(
+    () => scanLocalNetworkTargets({ ...validRequest, hosts: ["203.0.113.1"] }),
+    /private IPv4 addresses/,
+  );
+  await assert.rejects(
+    () => scanLocalNetworkTargets({ ...validRequest, ports: [443] }),
+    /approved service ports/,
+  );
+  await assert.rejects(
+    () => scanLocalNetworkTargets({ ...validRequest, concurrency: 64 }),
+    /fixed scan limits/,
+  );
+  await assert.rejects(
+    () => scanLocalNetworkTargets({
+      ...validRequest,
+      hosts: Array.from({ length: 255 }, (_, index) => `10.0.0.${(index % 254) + 1}`),
+    }),
+    /between 1 and 254 hosts/,
+  );
 });
 
 test("serves probe collection, detail, and creation routes", async () => {

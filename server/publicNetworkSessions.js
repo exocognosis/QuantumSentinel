@@ -1,6 +1,16 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { validateProbeRequest } from "./probeEngine.js";
+import {
+  isAddressInPrivateSlash24,
+  LOCAL_NETWORK_CONCURRENCY,
+  LOCAL_NETWORK_DISCOVERY_MODE,
+  LOCAL_NETWORK_MAX_HOSTS,
+  LOCAL_NETWORK_MAX_OBSERVATIONS,
+  LOCAL_NETWORK_PORTS,
+  LOCAL_NETWORK_TIMEOUT_MS,
+  parsePrivateSlash24,
+} from "./networkScanPolicy.js";
 
 const DEFAULT_TTL_MS = 15 * 60 * 1_000;
 const DEFAULT_MAX_SESSIONS = 100;
@@ -42,6 +52,53 @@ function validateSubmittedResult(job, scope) {
   if (!Array.isArray(observations)) {
     throw sessionError("network scan result is missing observations");
   }
+  const serialized = JSON.stringify(job);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_RESULT_BYTES) {
+    throw sessionError("network scan result is too large", 413);
+  }
+
+  if (scope.discoveryMode === LOCAL_NETWORK_DISCOVERY_MODE) {
+    if (observations.length > LOCAL_NETWORK_MAX_OBSERVATIONS) {
+      throw sessionError("local network scan result has too many observations");
+    }
+    const cidr = parsePrivateSlash24(job.result?.discovery?.cidr);
+    if (!cidr) throw sessionError("local network scan result is missing a valid private network");
+    const allowedPorts = new Set(LOCAL_NETWORK_PORTS);
+    const targets = new Set();
+    for (const observation of observations) {
+      const port = Number(observation?.port);
+      const target = `${observation?.host}:${port}`;
+      if (!isAddressInPrivateSlash24(observation?.host, cidr) || !allowedPorts.has(port)) {
+        throw sessionError("local network scan result contains a target outside the allowed network scope");
+      }
+      if (observation?.status !== "completed" || observation?.reachability?.tcp !== true) {
+        throw sessionError("local network scan result can contain only reachable services");
+      }
+      if (targets.has(target)) throw sessionError("local network scan result contains duplicate observations");
+      targets.add(target);
+    }
+    const summary = job.result?.summary;
+    const hostsScanned = Number(summary?.hostsScanned);
+    const portsScanned = Number(summary?.portsScanned);
+    const targetsScanned = Number(summary?.targetsScanned);
+    const reachableCount = Number(summary?.reachableCount);
+    const completedCount = Number(summary?.completedCount);
+    const failedCount = Number(summary?.failedCount);
+    const observationsIncluded = Number(summary?.observationsIncluded);
+    const observationsOmitted = Number(summary?.observationsOmitted);
+    if (!Number.isInteger(hostsScanned) || hostsScanned < 1 || hostsScanned > LOCAL_NETWORK_MAX_HOSTS
+        || portsScanned !== LOCAL_NETWORK_PORTS.length
+        || targetsScanned !== hostsScanned * portsScanned
+        || !Number.isInteger(reachableCount) || reachableCount < observations.length || reachableCount > targetsScanned
+        || completedCount !== reachableCount
+        || failedCount !== targetsScanned - reachableCount
+        || observationsIncluded !== observations.length
+        || observationsOmitted !== reachableCount - observations.length) {
+      throw sessionError("local network scan result totals are invalid");
+    }
+    return structuredClone(job);
+  }
+
   if (observations.length > scope.hosts.length * scope.ports.length) {
     throw sessionError("network scan result exceeds the approved scope");
   }
@@ -51,10 +108,6 @@ function validateSubmittedResult(job, scope) {
     if (!approvedHosts.has(observation?.host) || !approvedPorts.has(Number(observation?.port))) {
       throw sessionError("network scan result contains a target outside the approved scope");
     }
-  }
-  const serialized = JSON.stringify(job);
-  if (Buffer.byteLength(serialized, "utf8") > MAX_RESULT_BYTES) {
-    throw sessionError("network scan result is too large", 413);
   }
   return structuredClone(job);
 }
@@ -125,13 +178,34 @@ export function createPublicNetworkSessionStore({
       if (sessions.size >= maxSessions) {
         throw sessionError("too many active network scan sessions", 503);
       }
-      const scope = validateProbeRequest({
-        mode: "discovery",
-        hosts: input?.hosts,
-        ports: input?.ports,
-        concurrency: Math.min(4, Number(input?.concurrency) || 4),
-        timeoutMs: Math.min(5_000, Number(input?.timeoutMs) || 1_500),
-      });
+      let sessionScope;
+      if (input?.discoveryMode === LOCAL_NETWORK_DISCOVERY_MODE) {
+        if (input?.hosts != null || input?.ports != null) {
+          throw sessionError("automatic local network scans do not accept host or port entries");
+        }
+        sessionScope = {
+          discoveryMode: LOCAL_NETWORK_DISCOVERY_MODE,
+          ports: [...LOCAL_NETWORK_PORTS],
+          maxHosts: LOCAL_NETWORK_MAX_HOSTS,
+          maxObservations: LOCAL_NETWORK_MAX_OBSERVATIONS,
+          concurrency: LOCAL_NETWORK_CONCURRENCY,
+          timeoutMs: LOCAL_NETWORK_TIMEOUT_MS,
+        };
+      } else {
+        const scope = validateProbeRequest({
+          mode: "discovery",
+          hosts: input?.hosts,
+          ports: input?.ports,
+          concurrency: Math.min(4, Number(input?.concurrency) || 4),
+          timeoutMs: Math.min(5_000, Number(input?.timeoutMs) || 1_500),
+        });
+        sessionScope = {
+          hosts: scope.hosts,
+          ports: scope.ports,
+          concurrency: scope.concurrency,
+          timeoutMs: scope.timeoutMs,
+        };
+      }
       const id = randomUUID();
       const readToken = randomBytes(32).toString("base64url");
       const deviceCode = newDeviceCode();
@@ -146,12 +220,7 @@ export function createPublicNetworkSessionStore({
         expiresAtMs,
         clientKeyDigest,
         completedAt: null,
-        scope: {
-          hosts: scope.hosts,
-          ports: scope.ports,
-          concurrency: scope.concurrency,
-          timeoutMs: scope.timeoutMs,
-        },
+        scope: sessionScope,
         deviceCodeDigest: digestToken(deviceCode),
         uploadTokenDigest: null,
         readTokenDigest: digestToken(readToken),
